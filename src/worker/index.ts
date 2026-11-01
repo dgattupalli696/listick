@@ -100,10 +100,15 @@ if (doubles) console.log(`history: ${doubles} double plays collapsed`);
 void safe(fillGenres);
 
 const busy = new Set<string>();
-const timers = jobs.map((job) => {
-  void runJob(job, busy);
-  return setInterval(() => void runJob(job, busy), job.everyMs);
-});
+// each job's first run: a period after its last recorded run
+const lastRun = new Map((await db.select().from(jobRuns)).map((r) => [r.job, r.lastRunAt.getTime()]));
+const timers: ReturnType<typeof setTimeout>[] = [];
+for (const job of jobs) {
+  timers.push(setTimeout(() => {
+    void runJob(job, busy);
+    timers.push(setInterval(() => void runJob(job, busy), job.everyMs));
+  }, Math.max(0, (lastRun.get(job.name) ?? 0) + job.everyMs - Date.now())));
+}
 // the outside API calls made since the last write, added to api_calls
 const flush = () => flushCalls().catch((err) => console.error("api-calls:", err));
 timers.push(setInterval(flush, 30_000));

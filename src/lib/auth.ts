@@ -12,7 +12,8 @@ import { appName } from "@/server/util";
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL || LINK_ORIGIN() || undefined,
   database: drizzleAdapter(db, { provider: "pg", schema }),
-  session: { expiresIn: 180 * 24 * 3600 },   // sign-ins last 180 days
+  // sign-ins last 180 days; the session cached in a cookie for 60 s
+  session: { expiresIn: 180 * 24 * 3600, cookieCache: { enabled: true, maxAge: 60 } },
   emailAndPassword: {
     enabled: true,
     // the page's own reset form (/?reset=<token>) takes the link
