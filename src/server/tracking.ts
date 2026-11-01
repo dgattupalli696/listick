@@ -15,8 +15,7 @@ import { followOf } from './upnext';
 import { HOUR, present, safe } from './util';
 
 // ---------- tracking: the worker passes on what it sees in Stremio; this decides what was watched ----------
-// Movies, shows and anime come from Stremio; anime watched elsewhere is marked here. Plays older than the last one we already
-// had when tracking began are left to the imports.
+// Movies, shows and anime come from Stremio.
 // a user's tracking starts at their latest play when it begins (earlier ones are the imports'), or now for a new user
 export async function trackingSince(uid: string) {
   const u = await getUser(uid);
@@ -26,12 +25,20 @@ export async function trackingSince(uid: string) {
   return v;
 }
 // Stremio's watched record per series: "<anchor video>:<videos up to it>:<zlib bitmap>", bit i = the i-th video of the series'
-// list (Cinemeta for IMDb ids, the Kitsu addon for anime). A video id is "tt…:season:episode" or "kitsu:id:episode".
+// list (Cinemeta for IMDb ids, the Kitsu addon for anime, TMDB's seasons for the TMDB addon). A video id is "tt…:season:episode",
+// "kitsu:id:episode" or "tmdb:id:season:episode".
 type Vid = { id: string; tvdb: number | null };
 const metaVideos = new Map<string, { at: number; vids: Vid[] }>();
 async function seriesVideos(series: string) {
   const c = metaVideos.get(series);
   if (c && Date.now() - c.at < 6 * HOUR) return c.vids;
+  if (series.startsWith('tmdb:')) {
+    const id = series.slice(5), d = await tmdb<{ seasons?: { season_number: number; episode_count: number }[] }>(`/tv/${id}`);
+    const vids = (d.seasons || []).filter((s) => s.season_number > 0).sort((a, b) => a.season_number - b.season_number)
+      .flatMap((s) => Array.from({ length: s.episode_count }, (_, i) => ({ id: `tmdb:${id}:${s.season_number}:${i + 1}`, tvdb: null })));
+    metaVideos.set(series, { at: Date.now(), vids });
+    return vids;
+  }
   const base = series.startsWith('kitsu:') ? 'https://anime-kitsu.strem.fun' : 'https://v3-cinemeta.strem.io';
   const d = await getJSON<{ meta?: { videos?: CinemetaVideo[] } }>(`${base}/meta/series/${encodeURIComponent(series)}.json`);
   const vids = (d.meta?.videos || []).map((v) => ({ id: v.id, tvdb: v.tvdb_id || null }));
@@ -70,11 +77,12 @@ export function decodeWatched(field: string | null, vids: Vid[]) {
   for (let i = 0; i < len; i++) if (bits[i >> 3] & (1 << (i & 7)) && ids[i + off]) out.push(ids[i + off]);
   return out;
 }
-export const seriesOf = (video: string | null | undefined) => (video?.startsWith('kitsu:') ? video.split(':').slice(0, 2).join(':') : video?.split(':')[0]);
+export const seriesOf = (video: string | null | undefined) => (/^(kitsu|tmdb):/.test(video || '') ? video!.split(':').slice(0, 2).join(':') : video?.split(':')[0]);
 // a video as [season, episode]: anime episodes go under season 1, counted from the first as Kitsu does
 export const epOf = (video: string | null | undefined): [number, number] => {
   const p = (video || '').split(':');
   if (p[0] === 'kitsu') return p.length >= 3 ? [1, Number(p[2])] : [-1, -1];
+  if (p[0] === 'tmdb') return p.length >= 4 ? [Number(p[2]), Number(p[3])] : [-1, -1];
   return p.length >= 3 ? [Number(p[1]), Number(p[2])] : [-1, -1];
 };
 // an anime episode recorded twice within a week (under its Kitsu and its IMDb id in Stremio, or by an import) is one watch; a
@@ -92,10 +100,11 @@ async function keyOfSeries(series: string, movie = false) {
     if (!await getTitle(key)) await details(key).catch(() => null);
     return await getTitle(key) ? key : null;
   }
+  if (series.startsWith('tmdb:')) return keyOfMovie(`tmdb:tv:${series.slice(5)}`);
   const key = await resolve({ imdb: series }).catch(() => null);
   return key && (movie || !(await getTitle(key))?.anime) ? key : null;
 }
-// a movie by its TMDB key, its title fetched once if Listick doesn't have it yet
+// a movie or show by its TMDB key, its title fetched once if Listick doesn't have it yet
 async function keyOfMovie(key: string) {
   if (!await getTitle(key)) await details(key).catch(() => null);
   return await getTitle(key) ? key : null;
@@ -156,10 +165,10 @@ async function observeStremio(uid: string, items: StremioObserve[]) {
   }
   return added;
 }
-// first sight of a series watched in the last 30 days: episodes of the current season that Stremio has ticked but we have no play
-// for are added, their times estimated back from the last-watched time (45 min apart) and marked approx = 2
+// first sight of a series watched in the last 30 days: the episodes Stremio has ticked in the season of the last ticked one that we have no
+// play for are added, their times estimated back from the last-watched time (45 min apart) and marked approx = 2
 async function fillGaps(uid: string, vids: Vid[], now: Set<string>, cur: StremioSeen, series: string, key: string | null) {
-  const [se] = epOf(cur.video || [...now].pop());
+  const [se] = epOf([...now].pop() || cur.video);
   if (se < 0) return 0;
   const watched = vids.map((v) => v.id).filter((v) => now.has(v) && epOf(v)[0] === se).reverse().slice(0, 30);
   let t = cur.at, added = 0;
@@ -214,7 +223,7 @@ async function places(videos: string[]) {
   const out: Record<string, PlacedVideo> = {};
   for (const video of videos.slice(0, 40)) {
     const series = seriesOf(video);
-    if (!series || !/^(tt\d+|kitsu:\d+):/.test(video)) continue;
+    if (!series || !/^(tt\d+|kitsu:\d+|tmdb:\d+):/.test(video)) continue;
     const vids = await seriesVideos(series).catch((): Vid[] => []);
     const p = await placeAny(video, vids, await keyOfSeries(series), series).catch(() => null);
     const t = p && await getTitle(p.key);

@@ -28,10 +28,12 @@ describe('video ids', () => {
     assert.deepEqual(epOf('tt0903747:2:5'), [2, 5]);
     assert.deepEqual(epOf('kitsu:7442:12'), [1, 12]);
     assert.deepEqual(epOf('tt0133093'), [-1, -1]);
+    assert.deepEqual(epOf('tmdb:79063:2:1'), [2, 1]);
   });
   test('the series of a video', () => {
     assert.equal(seriesOf('tt0903747:2:5'), 'tt0903747');
     assert.equal(seriesOf('kitsu:7442:12'), 'kitsu:7442');
+    assert.equal(seriesOf('tmdb:79063:2:1'), 'tmdb:79063');
   });
 });
 

@@ -31,8 +31,9 @@ type SeriesMeta = Record<string, { anime: boolean; vids: SeriesVid[] }>;
 // Only full watches count (90 % of the runtime, or marked watched), so test clicks and half-watched episodes never show.
 const FULL = 0.9;
 const vidParts = (vid: string | null | undefined): [number | null, number | null] => {
-  // video ids: tt<imdb>:season:ep, or kitsu:<id>:ep (anime numbered per season entry)
+  // video ids: tt<imdb>:season:ep, tmdb:<id>:season:ep, or kitsu:<id>:ep (anime numbered per season entry)
   const p = (vid || '').split(':');
+  if (p[0] === 'tmdb') return p.length === 4 ? [+p[2], +p[3]] : [null, null];
   return p[0] === 'kitsu' ? [null, p[2] ? +p[2] : null] : p.length === 3 ? [+p[1], +p[2]] : [null, null];
 };
 const cleanName = (n: string | null | undefined) => (n || '').replace(/\s*\((?:19|20)\d{2}\)\s*$/, '');
@@ -62,7 +63,7 @@ export async function stremio(authKey: string | null, tag: string): Promise<Stre
     return abs(x._id, { title: cleanName(x.name), type: x.type, season, ep, at: watchedAt(x), poster: x.poster || null, url: link(x), id: x._id });
   });
   const now = Date.now(), since = now - 60 * 86400000;
-  // continue watching: a started episode or movie (2 min to 90 %), and one playing now; Up next comes from the History (upnext.ts)
+  // continue watching: a started episode or movie (2 min to 90 %), and one playing now
   const cont: ContinueCard[] = [];
   for (const x of items.filter((i) => watchedAt(i) > since)) {
     const st = x.state!, [season, ep] = vidParts(st.video_id);
@@ -81,7 +82,7 @@ export async function stremio(authKey: string | null, tag: string): Promise<Stre
   return { history, last: history[0] || null, continue: cont.slice(0, 15), now: nowPlaying, watched7, observe };
 }
 // the aired episodes (season, episode) of the IMDb-listed series watched in the last 60 days, from Cinemeta: anime are numbered
-// from their first episode by them (Up next and the calendar come from the History, upnext.ts)
+// from their first episode by them
 async function seriesMeta(items: LibraryItem[]): Promise<SeriesMeta> {
   const since = Date.now() - 60 * 86400000, out: SeriesMeta = {};
   const ids = [...new Set(items.filter((x) => x.type === 'series' && /^tt\d+$/.test(x._id) && watchedAt(x) > since).map((x) => x._id))].slice(0, 25);
