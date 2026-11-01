@@ -16,7 +16,7 @@ export interface Title {
 // a Kitsu entry before fillFromTmdb: its other names and whether one of them is English
 export interface KitsuTitle extends Title { alt?: string[]; english?: boolean }
 
-// Better Auth's user row with Listick's profile, in the old app's shape (USER_SQL)
+// Better Auth's user row with Listick's profile (USER_SQL)
 export interface User {
   id: string; name: string; first_name: string | null; email: string | null; created_at: number; admin: boolean;
   stremio_key: string | null; stremio_user: string | null; tracking_since: number | null;
@@ -48,7 +48,7 @@ export interface Detail {
   genres: string[]; runtime: number | null; released: string | null; status: string | null; tagline: string | null;
   seasons: Season[] | null; next: { season?: number; ep?: number; date: string | null } | null;
   people: { label: string; names: string[] } | null;
-  cast: { name: string | undefined; role: string | null; photo: string | null }[];
+  cast: { name: string | undefined; role: string | null; photo: string | null; id?: number | null }[];
   providers: { stream: Provider[]; free: Provider[]; rent: Provider[]; buy: Provider[] } | null;
   imdb: string | null; tvdb?: number | null; scores?: Omdb | null; collection?: { id: number; name: string } | null;
   certification: string | null; trailer: string | null; writers?: string[]; money?: { budget: number | null; revenue: number | null };
@@ -60,8 +60,12 @@ export interface Detail {
   v?: number;
   facts: Record<string, string | number | null>;
   episodes?: number | null; format?: string | null; malUrl?: string | null;
+  // show backdrops
+  backdrops?: string[];
 }
-export interface Episode { ep: number; name: string | null; air: string | null; runtime: number | null; still: string | null; overview: string | null; tvdb?: boolean; se?: number; tep?: number }
+type Guest = { id: number; name: string; role: string | null; photo: string | null };
+export interface Episode { ep: number; name: string | null; air: string | null; runtime: number | null; still: string | null; overview: string | null; tvdb?: boolean; se?: number; tep?: number;
+  score?: number | null; votes?: number; directors?: string[]; writers?: string[]; guests?: Guest[] }
 
 import type { AirEp, UpNext } from './upnext';
 
@@ -94,7 +98,8 @@ export interface TmdbProviders { flatrate?: TmdbProvider[]; free?: TmdbProvider[
 export interface TmdbVideo { site: string; type: string; key: string; official: boolean; iso_639_1?: string }
 export interface TmdbDetails extends TmdbItem {
   'watch/providers'?: { results?: Record<string, TmdbProviders> };
-  credits?: { crew?: { job: string; name: string }[]; cast?: { name: string; character?: string; profile_path?: string | null }[] };
+  images?: { backdrops?: { file_path: string }[] };
+  credits?: { crew?: { job: string; name: string }[]; cast?: { id?: number; name: string; character?: string; profile_path?: string | null }[] };
   runtime?: number; episode_run_time?: number[]; status?: string; tagline?: string;
   next_episode_to_air?: TmdbEpisodeRef | null; last_episode_to_air?: TmdbEpisodeRef | null; created_by?: { name: string }[];
   external_ids?: { imdb_id?: string | null; tvdb_id?: number | null }; imdb_id?: string | null;
@@ -111,7 +116,8 @@ export interface TmdbFind {
   tv_episode_results?: { show_id: number; season_number: number; episode_number: number }[];
 }
 export interface TmdbSeasonDetails {
-  episodes?: { episode_number: number; name?: string; air_date?: string | null; runtime?: number | null; still_path?: string | null; overview?: string }[];
+  episodes?: { episode_number: number; name?: string; air_date?: string | null; runtime?: number | null; still_path?: string | null; overview?: string; vote_average?: number; vote_count?: number;
+    crew?: { job: string; name: string }[]; guest_stars?: { id: number; name: string; character?: string; profile_path?: string | null }[] }[];
 }
 export interface TmdbCollection { parts?: TmdbItem[] }
 export interface TmdbWatchProviders { results?: Record<string, TmdbProviders> }

@@ -200,7 +200,6 @@ export const imports = pgTable("imports", {
   finishedAt: ms("finished_at"),
 }, (t) => [index("imports_queue").on(t.status, t.createdAt), index("imports_user").on(t.userId, t.createdAt)]);
 
-// OMDb scores per IMDb id (IMDb, Rotten Tomatoes, Metacritic)
 // a title's name, poster (TMDB's path) and overview in another language, for users who want titles in it (names.ts)
 export const titleNames = pgTable("title_names", {
   key: text("key").notNull(),
@@ -219,6 +218,7 @@ export const titleScores = pgTable("title_scores", {
   checkedAt: ms("checked_at").notNull(),
 }, (t) => [primaryKey({ columns: [t.key, t.source] })]);
 
+// OMDb scores per IMDb id (IMDb, Rotten Tomatoes, Metacritic)
 export const omdb = pgTable("omdb", {
   imdb: text("imdb").primaryKey(),
   data: jsonb("data").notNull(),

@@ -1,35 +1,46 @@
 'use client';
-// The title panel: opens from any card, as big as a page on wider screens. The card: header (art, facts, your status and rating, actions), then Overview,
-// Episodes (series), Cast, Similar (and a movie's Collection) in the menu under the poster. Your marks go to Listick and the
-// card redraws from its answer.
+// Title panel: small view and full page
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref as RRef } from 'react';
 import { createPortal } from 'react-dom';
-import { PIcon, TrendCard, usePosterDial } from './Cards';
+import { TrendCard, usePosterDial } from './Cards';
 import { Circ, EpisodesPane, PickDay, airAt, fmtDay, timed } from './Episodes';
 import { getJ, postJ } from './lib/api';
 import { DASH, ago } from './lib/format';
 import { useHome, usePhone } from './lib/home';
 import { Icon, PATHS } from './lib/icons';
+import { openAddTo } from './lib/lists';
 import { TYPE_NAME, type Ref, type Tile } from './lib/media';
-import { TitleCtx, loadTitle, titleUrl, useTitle, type PickArgs, type Title, type TitleState } from './lib/title';
 import { Group } from './Rail';
+import { TopBar } from './Shell';
+import { ShelfGrid } from './Shelf';
+import { TitleCtx, loadTitle, setTitleNav, titleUrl, useTitle, type PersonRef, type PickArgs, type Title, type TitleState } from './lib/title';
 
 export type TitlePanelApi = { open: (ref: Ref) => void };
 type Body = { t?: Title; err?: string; loading?: boolean; top?: number; fade?: boolean };
 
-// The card opens (.in: the backdrop fades, the card grows in, on a phone it slides up) once its content is there, or with
-// "Loading…" after 250 ms, so it doesn't open small and then jump to its full size. An open card is a step in the browser's
+// The card opens (.in: the backdrop fades, the card grows in) once its content is there, or with "Loading…" after 250 ms
+// (on a phone a title opens on its full page, the Loading card sliding up meanwhile). An open card is a step in the browser's
 // history, so Back closes it instead of leaving the page: closing goes back one step, and the popstate does the closing. It
 // plays the opening backwards (.out), then hides the card. The scrim's hidden and in/out are set here directly.
 export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
   const { reload } = useHome();
   const tp = useRef<HTMLDivElement>(null), panel = useRef<HTMLElement>(null), body = useRef<HTMLDivElement>(null);
-  const x = useRef<HTMLButtonElement>(null), thumb = useRef<HTMLSpanElement>(null);
-  const seq = useRef(0), from = useRef<Element | null>(null), closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), swap = useRef(false);
+  const x = useRef<HTMLButtonElement>(null);
+  const seq = useRef(0), from = useRef<Element | null>(null), closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [content, setContent] = useState<Body>({});
   const [view, setView] = useState(0);   // each opening is a fresh card (its tab, season, …); a redraw keeps them
   const [trailer, setTrailer] = useState<string | null>(null);
   const [pick, setPick] = useState<(PickArgs & { n: number }) | null>(null);
+  const [full, setFull] = useState(false);
+  // small view over a full page
+  const [under, setUnder] = useState<{ t: Title; view: number } | null>(null);
+  const trail = useRef<{ t: Title; view: number; top: number }[]>([]);
+  const [person, setPerson] = useState<(PersonRef & { n: number }) | null>(null);
+  const personOn = useRef(false);
+  useEffect(() => { personOn.current = !!person; }, [person]);
+  const now = useRef({ full, t: content.t, view, under });
+  useEffect(() => { now.current = { full, t: content.t, view, under }; });
+  const fullEl = useRef<HTMLDivElement>(null);
   const trailerOn = useRef(false);
   useEffect(() => { trailerOn.current = !!trailer; }, [trailer]);
 
@@ -40,18 +51,28 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
     if (s.hidden || s.classList.contains('out')) return;
     if (!fromPop && history.state?.tp) { history.back(); return; }
     closeTrailer();
-    seq.current++; s.classList.remove('in'); s.classList.add('out'); document.body.classList.remove('tp-open'); (from.current as HTMLElement | null)?.focus?.();
-    closing.current = setTimeout(() => { s.hidden = true; s.classList.remove('out', 'swiped'); Object.assign(panel.current!.style, { transform: '', transition: '' }); }, 240);
+    seq.current++; s.classList.remove('in'); s.classList.add('out'); document.body.classList.remove('tp-open'); setTitleNav(null);
+    const at = document.activeElement;
+    if (!at || at === document.body || s.contains(at)) (from.current as HTMLElement | null)?.focus?.();
+    closing.current = setTimeout(() => { s.hidden = true; s.classList.remove('out', 'swiped'); setFull(false); setUnder(null); trail.current = []; if (panel.current) Object.assign(panel.current.style, { transform: '', transition: '' }); }, 240);
   }, []);
 
   const open = useCallback(async (r: Ref) => {
     const s = tp.current!, n = ++seq.current;
-    if (s.hidden) from.current = document.activeElement;
+    if (s.hidden) { from.current = document.activeElement; trail.current = []; }
     const data = loadTitle(r).then((t) => ({ t }), (e: Error) => ({ err: `Couldn't load this title (${e.message}).` }));
     const quick = await Promise.race([data, new Promise<null>((ok) => setTimeout(() => ok(null), 250))]);
     if (n !== seq.current) return;
     clearTimeout(closing.current);
-    setView(n); setContent({ ...(quick || { loading: true }), top: 0 });
+    setPerson(null);
+    const was = now.current;
+    // phone: straight to the full page
+    const phone = matchMedia('(max-width: 800px)').matches;
+    if (was.full && was.t && !s.hidden && !s.classList.contains('out')) {
+      if (phone) trail.current.push({ t: was.t, view: was.view, top: fullEl.current?.scrollTop || 0 });
+      else setUnder({ t: was.t, view: was.view });
+    }
+    setView(n); setFull(phone); setContent({ ...(quick || { loading: true }), top: 0 });
     if (s.hidden || s.classList.contains('out')) {
       s.classList.remove('out', 'in', 'swiped'); s.hidden = false; void s.offsetWidth; s.classList.add('in');
       if (!history.state?.tp) history.pushState({ tp: 1 }, '');
@@ -61,9 +82,12 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
     if (quick) return;
     const got = await data;
     if (n !== seq.current) return;
-    swap.current = true; setContent({ ...got, top: 0, fade: true });
+    setContent({ ...got, top: 0, fade: true });
   }, []);
   useImperativeHandle(ref, () => ({ open: (r) => void open(r) }), [open]);
+  const close = useCallback(() => closeTitle(), [closeTitle]);
+  // closed at once, its history entry and trail dropped (a page link or a search goes on from here)
+  const leave = useCallback(() => { trail.current = []; if (history.state?.tp) history.replaceState(null, ''); closeTitle(true); }, [closeTitle]);
 
   const key = content.t?.key;
   const reloadTitle = useCallback(async () => {
@@ -72,50 +96,49 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
     reload(800);
   }, [key, reload]);
   const backRef = useRef<(() => boolean) | null>(null);
-  const ctx = useMemo<TitleState>(() => ({ reloadTitle, backRef, pickDay: (a) => setPick((p) => ({ ...a, n: (p?.n || 0) + 1 })), playTrailer: (url) => {
+  const closePerson = () => { if (!personOn.current) return false; personOn.current = false; setPerson(null); return true; };
+  const backToUnder = () => {
+    const u = now.current.under; if (!u || now.current.full) return false;
+    seq.current++; setUnder(null); setView(u.view); setContent({ t: u.t }); setFull(true);
+    return true;
+  };
+  const backDownTrail = () => {
+    if (!now.current.full || !trail.current.length) return false;
+    const b = trail.current.pop()!;
+    seq.current++; setView(b.view); setContent({ t: b.t, top: b.top });
+    return true;
+  };
+  const expand = () => {
+    const u = now.current.under;
+    if (u) trail.current.push({ ...u, top: fullEl.current?.scrollTop || 0 });
+    setUnder(null); setFull(true);
+  };
+  const ctx = useMemo<TitleState>(() => ({ reloadTitle, backRef, openPerson: (p) => setPerson((x) => ({ ...p, n: (x?.n || 0) + 1 })),
+    pickDay: (a) => setPick((p) => ({ ...a, n: (p?.n || 0) + 1 })), playTrailer: (url) => {
     const id = (url.match(/[?&]v=([\w-]{6,})/) || [])[1];
     if (!id) { window.open(url, '_blank', 'noopener'); return; }
     setTrailer(id);
   } }), [reloadTitle]);
 
-  // the title card's scroll handle, over the content (see .tp-thumb); placed on scroll and while the pointer is over the card
-  const placeThumb = () => {
-    const b = body.current, th = thumb.current; if (!b || !th) return;
-    const track = b.clientHeight - 52 - 28, on = b.scrollHeight > b.clientHeight + 1;
-    th.classList.toggle('on', on);
-    if (!on) return;
-    const h = Math.max(48, (track * b.clientHeight) / b.scrollHeight);
-    th.style.height = `${h}px`;
-    th.style.top = `${b.offsetTop + 52 + ((track - h) * b.scrollTop) / (b.scrollHeight - b.clientHeight)}px`;
-  };
   useLayoutEffect(() => {
     const b = body.current!;
     if (content.top != null) b.scrollTop = content.top;
+    const want = content.top || 0, until = Date.now() + 1500;
+    const again = () => { if (body.current !== b || b.scrollTop >= want - 2 || Date.now() > until) return; b.scrollTop = want; requestAnimationFrame(again); };
+    if (b.scrollTop < want - 2) requestAnimationFrame(again);
     if (content.fade) b.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: 'ease-out' });
-    placeThumb();
   }, [content]);
 
 
+  useEffect(() => { if (history.state?.tp) history.replaceState(null, ''); }, []);
   useEffect(() => {
     const p = panel.current!;
-    // the card sits in the middle of the screen, so when a part grows (Episodes, then its rows once loaded) it would jump up to
-    // re-centre: it glides there instead. offsetTop is the layout position, unmoved by a glide still running
-    let last: number | null = null;
-    const ro = new ResizeObserver(() => {
-      if (!p.offsetParent) { last = null; return; }   // closed: the next card opens without a glide
-      const top = p.offsetTop;
-      if (swap.current) { swap.current = false; last = top; return; }   // "Loading…" became the card: it fades in where it lands
-      if (last != null && Math.abs(top - last) > 1) p.animate([{ transform: `translateY(${last - top}px)` }, { transform: 'none' }], { duration: 220, easing: 'ease-out' });
-      last = top;
-    });
-    ro.observe(p);
-    if (history.state?.tp) history.replaceState(null, '');   // reloaded with a card open: it isn't any more
     const pop = () => {
       if (shut()) return;
-      if (closeTrailer() || backRef.current?.()) history.pushState({ tp: 1 }, '');   // Back stops the trailer (or leaves an episode) first
+      if (closeTrailer() || closePerson() || backToUnder() || backRef.current?.() || backDownTrail()) history.pushState({ tp: 1 }, '');
       else closeTitle(true);
     };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !shut()) { if (!closeTrailer() && !backRef.current?.()) closeTitle(); } };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !shut()) { if (!closeTrailer() && !closePerson() && !backToUnder() && !backRef.current?.() && !backDownTrail()) closeTitle(); } };
     window.addEventListener('popstate', pop); document.addEventListener('keydown', esc);
     // iOS gives a web app on the home screen no back swipe, so there the card has its own: from the left edge it follows the
     // finger and, let go past a third of the screen (or flicked), slides away and closes; otherwise it slides back
@@ -138,30 +161,39 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
     const standalone = (navigator as Navigator & { standalone?: boolean }).standalone;
     if (standalone) { p.addEventListener('touchstart', ts, { passive: true }); p.addEventListener('touchmove', tm, { passive: false }); p.addEventListener('touchend', te); }
     return () => {
-      ro.disconnect(); window.removeEventListener('popstate', pop); document.removeEventListener('keydown', esc);
+      window.removeEventListener('popstate', pop); document.removeEventListener('keydown', esc);
       p.removeEventListener('touchstart', ts); p.removeEventListener('touchmove', tm); p.removeEventListener('touchend', te);
     };
-  }, [closeTitle]);
+  }, [closeTitle, full, under]);
 
+  const player = trailer && (
+    // trailer
+    <div className="tc-player">
+      <iframe src={`https://www.youtube-nocookie.com/embed/${trailer}?autoplay=1&rel=0&modestbranding=1`} allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+        allowFullScreen title="Trailer" referrerPolicy="strict-origin-when-cross-origin" />
+      <button type="button" className="hero-x" aria-label="Close the trailer" onClick={closeTrailer}>×</button>
+    </div>
+  );
+  const base = full && content.t ? { t: content.t, view } : under;
+  const peek = !full && (
+    <aside ref={panel} className={`tpanel tpeek${trailer ? ' playing' : ''}`} role="dialog" aria-modal="true" aria-label="Title details">
+      <div ref={body} className="tp-body" id="tp-body">
+        {content.t ? <TitlePeek key={view} d={content.t} expand={expand} expandRef={x} />
+          : content.err ? <div className="tp-note">{content.err}</div> : content.loading ? <div className="tp-note">Loading…</div> : null}
+      </div>
+      {player}
+    </aside>
+  );
   return createPortal(
     <TitleCtx.Provider value={ctx}>
-      <div ref={tp} className="tp-scrim" id="tp" hidden onClick={(e) => { if (e.target === e.currentTarget) closeTitle(); }}>
-        <aside ref={panel} className={`tpanel glass${trailer ? ' playing' : ''}`} role="dialog" aria-modal="true" aria-label="Title details">
-          <button ref={x} type="button" className="tp-x" id="tp-x" aria-label="Close" onClick={() => { if (!closeTrailer()) closeTitle(); }}>×</button>
-          <div ref={body} className="tp-body" id="tp-body" onScroll={placeThumb} onPointerMove={placeThumb}>
-            {content.t ? <TitleView key={view} d={content.t} /> : content.err ? <div className="tp-note">{content.err}</div> : content.loading ? <div className="tp-note">Loading…</div> : null}
+      <div ref={tp} className={`tp-scrim${base ? ' full' : ''}`} id="tp" hidden onClick={(e) => { if (e.target === e.currentTarget) closeTitle(); }}>
+        {base && (
+          <div key={base.view} ref={(el) => { fullEl.current = el; if (full) { panel.current = el; body.current = el; } }} className="tfull" role="dialog" aria-modal="true" aria-label={base.t.title}>
+            <TitleFull key={base.view} d={base.t} close={close} leave={leave} scroller={fullEl} player={full ? player : null} />
           </div>
-          <span ref={thumb} className="tp-thumb" />
-          {/* the trailer covers the whole title card (youtube-nocookie: no tracking cookies until you press play); the card's own ×
-              stays on top and closes the trailer first. YouTube refuses embeds that send no Referer (error 153), so the frame
-              shares just the origin */}
-          {trailer && (
-            <div className="tc-player">
-              <iframe src={`https://www.youtube-nocookie.com/embed/${trailer}?autoplay=1&rel=0&modestbranding=1`} allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                allowFullScreen title="Trailer" referrerPolicy="strict-origin-when-cross-origin" />
-            </div>
-          )}
-        </aside>
+        )}
+        {(!full || !content.t) && (under ? <div className="tp-over" onClick={(e) => { if (e.target === e.currentTarget) closeTitle(); }}>{peek}</div> : peek)}
+        {person && <div className="tp-over" onClick={(e) => { if (e.target === e.currentTarget) closeTitle(); }}><PersonView key={person.n} p={person} /></div>}
       </div>
       {pick && <PickDay key={pick.n} a={pick} close={() => setPick(null)} />}
     </TitleCtx.Provider>,
@@ -205,11 +237,11 @@ export const YtLogo = () => (
   </svg>
 );
 
-// a title's line of text (type, year · runtime · seasons or episodes · status · up to 3 genres); the age rating is boxed after it
-export function metaOf(d: Title) {
+// meta line
+export function metaOf(d: Title, noType = false) {
   const nSeasons = d.seasons?.filter((s) => s.n > 0).length;
   const hm = (min: number) => (min >= 60 ? `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m` : `${min}m`);
-  return [d.type === 'movie' ? null : d.anime ? 'Anime' : TYPE_NAME[d.type], d.year, d.runtime ? (d.type === 'movie' ? hm(d.runtime) : `${d.runtime}min / ep`) : null,
+  return [d.type === 'movie' || noType ? null : d.anime ? 'Anime' : TYPE_NAME[d.type], d.year, d.runtime ? (d.type === 'movie' ? hm(d.runtime) : `${d.runtime}min / ep`) : null,
     d.type === 'tv' && nSeasons ? `${nSeasons} season${nSeasons === 1 ? '' : 's'}` : d.type !== 'movie' && d.episodes ? `${d.episodes} eps` : null,
     d.type !== 'movie' && d.status ? String(d.status).replace(/^./, (c) => c.toUpperCase()) : null, ...shortGenres(d.genres).slice(0, 3)].filter(Boolean).join(' · ');
 }
@@ -217,10 +249,8 @@ export const Cert = ({ d }: { d: Title }) => d.certification ? (
   <span className="tc-cert" style={CERT_RING[d.certification] ? ({ '--cert': CERT_RING[d.certification] } as CSSProperties) : undefined}>{d.certification}</span>
 ) : null;
 
-// every score with its source's logo, then Letterboxd and what's given after a thin line (the trailer); the title card and the
-// Movies, TV and Anime carousel
-// mine: your rating, first in the row (the carousel's; the card shows yours on its poster)
-export function Scores({ d, mine, children }: { d: Title; mine?: number | null; children?: ReactNode }) {
+// scores
+export function Scores({ d, children }: { d: Title; children?: ReactNode }) {
   // IMDb, Rotten Tomatoes, Metacritic (OMDb), TMDB or MyAnimeList (yours is the poster's
   // circle). Each opens the title on that site (Rotten Tomatoes / Metacritic pages come from Wikidata; without one, and for
   // MAL, the site's search)
@@ -253,168 +283,220 @@ export function Scores({ d, mine, children }: { d: Title; mine?: number | null; 
   const lb = d.type === 'movie' && /^tmdb:movie:\d+$/.test(d.key);
   return (
     <div className="tc-chips">
-      {!!mine && (
-        <span className="tc-score tc-mine" style={{ '--fill': `${mine * 10}%` } as CSSProperties} aria-label={`Your rating ${mine.toFixed(1)}`}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d={PATHS.star} fill="currentColor" /></svg><b>{mine.toFixed(1)}</b>
-        </span>
-      )}
       {scores}
       {/* a thin line parts the scores from the links (Letterboxd, the trailer); with no score, no line */}
-      {(scores.length > 0 || !!mine) && (lb || children) && <span className="tc-sep" />}
+      {scores.length > 0 && (lb || children) && <span className="tc-sep" />}
       {lb && <a className="tc-score tc-lb" href={`https://letterboxd.com/tmdb/${d.key.split(':')[2]}/`} target="_blank" rel="noopener" aria-label="Letterboxd"><img src="/icons/letterboxd-dots.svg" alt="" /><b className="tc-link">Reviews</b></a>}
       {children}
     </div>
   );
 }
 
-function TitleView({ d }: { d: Title }) {
-  const phone = usePhone();
-  const { reloadTitle, playTrailer } = useTitle();
-  const meta = metaOf(d);
+const trend = (t: Tile) => <TrendCard t={t} />;
+const KIND: Record<string, string> = { movie: 'Film', tv: 'Show', anime: 'Anime' };
+const wide = (u: string | null) => u?.replace('/t/p/w780/', '/t/p/w1280/') || undefined;
 
-  // the trailer: the YouTube logo in a circle ending the ratings row (plays in the card); on the phone it joins the action row
-  const trailer = (short: boolean) => d.trailer && (
-    <button type="button" className="tc-ytico" aria-label="Play the trailer" onClick={() => playTrailer(d.trailer!)}>
-      <YtLogo />{short ? <span className="tc-al">Trailer</span> : <b className="tc-link">Trailer</b>}
-    </button>
-  );
-
-  // the big poster carries the same circle as the row cards; its open circle is Add to list. A
-  // change there redraws the card once the pointer leaves the poster
+// status circle
+export function StatusDial({ d }: { d: Title }) {
+  const { reloadTitle } = useTitle();
   const regular = (d.seasons || []).filter((s) => s.n > 0), total = regular.reduce((n, s) => n + (s.episodes || 0), 0);
   const progress = total ? Math.min(1, regular.reduce((n, s) => n + (d.you?.bySeason?.[s.n] || 0), 0) / total) : null;
   const tile = useMemo<Tile>(() => ({ key: d.key, type: d.type, title: d.title, poster: d.poster, watchlist: d.watchlist,
     watched: (d.type === 'movie' ? d.you?.plays : d.you?.episodes) || 0, mine: d.you?.rating || null, progress, lastAt: d.you?.last || null, next: d.upNext || null }), [d, progress]);
   const dirty = useRef(false);
   const closed = useCallback(() => { if (dirty.current) { dirty.current = false; void reloadTitle(); } }, [reloadTitle]);
-  const dial = usePosterDial(tile, { cls: 'tc-postwrap', changed: () => { dirty.current = true; }, closed });
-  const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(idle.current), []);
-
-  // phone: the poster's circle and its options become a row of labelled circles under the scores: how much of a show
-  // you've watched, your rating (dragged round, as on the poster), Plan to watch, Watched (films: it shows the film watched
-  // itself, so no second circle for it) and the trailer
-  const seenN = d.type === 'movie' ? 0 : d.you?.episodes;
-  const row = phone && (
-    // the poster's circle reloads the card when the pointer leaves it; here that waits until the row has been left alone
-    <div className="tc-actrow" onPointerUp={() => { clearTimeout(idle.current); idle.current = setTimeout(closed, 3500); }}>
-      {!!seenN && (
-        <div className="tc-act">
-          <span className="tc-acirc" style={{ '--fill': `${(progress ?? 1) * 100}%` } as CSSProperties}><span><PIcon name="watched" /></span></span>
-          <span className="tc-al">{total ? `${d.you!.episodes}/${total}` : `${d.you!.episodes} eps`}</span>
-        </div>
-      )}
-      {dial.rate('Rating')}{dial.plan('Plan')}{dial.seen?.('Watched')}{trailer(true)}
+  const dial = usePosterDial(tile, { cls: 'tc-sdial', changed: () => { dirty.current = true; }, closed });
+  const t = dial.t, done = t.type === 'movie' || (t.progress ?? 1) >= 1;
+  const word = t.mine ? 'Rated' : t.watched ? (done ? 'Watched' : 'Watching') : t.watchlist ? 'Planned' : 'Add';
+  // phone: status row
+  const phone = usePhone(), listRef = useRef<HTMLButtonElement>(null);
+  if (phone) return (
+    <div className="tc-sdial dialhost tc-actrow2">
+      {t.type !== 'movie' && <span className="topt rated" style={{ '--fill': `${(t.progress || 0) * 100}%` } as CSSProperties} role="img" aria-label={done && t.watched ? 'All watched' : `${Math.round((t.progress || 0) * 100)}% watched`}>
+        <span className="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={PATHS.watched} /></svg></span>
+        <span className="tc-al">{t.watched ? (done ? 'Watched' : 'Watching') : '0%'}</span></span>}
+      {dial.seen?.(t.watched ? 'Watched' : 'Watch')}
+      {dial.rate(t.mine ? 'Rated' : 'Rate')}
+      {dial.plan(t.watchlist ? 'Planned' : 'Plan')}
+      <button ref={listRef} type="button" className="topt" aria-label="Add to list" onClick={() => openAddTo({ key: t.key, title: t.title, from: listRef.current })}>
+        <span className="dot"><Icon d="M4 6.5h11M4 12h11M4 17.5h7M18 14.5v6M15 17.5h6" size={18} width={2} /></span><span className="tc-al">List</span>
+      </button>
+      {dial.ringDial}
     </div>
   );
-  // on a phone the backdrop, poster, title, scores and your circles fill the first screen; a swipe brings the story and the
-  // rest (style.css); elsewhere tc-first lays out as if it weren't there
   return (
-    <>
-      <div className="tc-first">
-      <div className="tc-hero" style={d.backdrop ? { backgroundImage: `url("${d.backdrop}")` } : undefined}>
-        <div className="tc-head">
-          <div {...dial.host}>
-            <img className="tc-poster" alt="" src={d.poster || undefined} />
-            <div className="tdial-shade" />
-            <div className="tdial-menu">{!phone && <>{dial.plan()}{dial.seen?.()}{dial.rate()}</>}</div>
-            {dial.dial}{dial.ringDial}
-          </div>
-          <div className="tc-h">
-            <h2 className="tc-title">{d.title + (d.label ? ` · ${d.label}` : '')}</h2>
-            {d.watching && <span className="tc-now">{['Watching now', d.watching.se >= 0 ? (d.type === 'anime' ? `E${d.watching.ep}` : `S${d.watching.se} E${d.watching.ep}`) : null,
-              d.watching.pct != null ? `${d.watching.pct} %` : null].filter(Boolean).join(' · ')}</span>}
-            <div className="tc-meta">{meta}<Cert d={d} /></div>
-            <Scores d={d}>{!phone && trailer(false)}</Scores>
-          </div>
-        </div>
-      </div>
-      {row}
-      <span className="tc-down" aria-hidden="true"><Icon d="M6 9l6 6 6-6" size={22} width={2} /></span>
-      </div>
-      <div className="tc-rest">
-      <div className="tc-acts tc-beside">
-        {d.tagline && <p className="tc-tagline">{d.tagline}</p>}
-        {d.overview && <Overview text={d.overview} />}
-      </div>
-      <CardBody d={d} />
-      </div>
-    </>
-  );
-}
-// a long overview stops at five lines; More shows the rest
-function Overview({ text }: { text: string }) {
-  const ov = useRef<HTMLParagraphElement>(null);
-  const [clamp, setClamp] = useState(true), [long, setLong] = useState(false);
-  useEffect(() => { const f = requestAnimationFrame(() => { const p = ov.current; if (p) setLong(p.scrollHeight > p.clientHeight + 2); }); return () => cancelAnimationFrame(f); }, [text]);
-  return (
-    <>
-      <p ref={ov} className={`tc-overview${clamp ? ' clamp' : ''}`}>{text}</p>
-      <button type="button" className="tc-more tc-ovmore" hidden={!long} onClick={() => setClamp(!clamp)}>{clamp ? 'More' : 'Less'}</button>
-    </>
-  );
-}
-
-// Below the header: a menu in the poster's column (the poster's circle with an icon, then name and count) with the open part
-// beside it, so the card stays about one screen tall. Shows: Overview · Episodes · Cast · Similar; movies: Overview · Cast ·
-// Similar · Collection
-const TC_ICON: Record<string, string> = {
-  overview: 'M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17zM12 11v5.5M12 7.8h.01',
-  episodes: 'M3.5 5.5h17v13h-17zM10 9.3l5 2.7-5 2.7z',
-  cast: 'M9 11a3.5 3.5 0 1 0 0-7a3.5 3.5 0 1 0 0 7zM2.5 20c.8-3.6 3.3-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.3a3.3 3.3 0 0 1 0 6.4M18 14.8c2 .7 3.2 2.4 3.5 5.2',
-  similar: 'M8.5 8h11v12.5h-11zM5 4.5h11M5 4.5v12.5',
-  collection: 'M3.5 9.5h17v11h-17zM5.5 6.5h13M7.5 3.5h9',
-};
-const trend = (t: Tile) => <TrendCard t={t} />;
-function CardBody({ d }: { d: Title }) {
-  const [tab, setTab] = useState('overview');
-  const [eps, setEps] = useState({ season: null as number | null, allEps: false, home: 0 });
-  const y = d.you || {}, total = (d.facts?.episodes as number | null) || d.episodes || null;
-  const tabs: [string, string, string][] = [['overview', 'Overview', ''],
-    ...(d.type !== 'movie' && d.seasons?.length ? [['episodes', 'Episodes', total ? `${y.episodes || 0}/${total}` : String(y.episodes || '')] as [string, string, string]] : []),
-    ...(d.cast?.length ? [['cast', 'Cast', String(d.cast.length)] as [string, string, string]] : []),
-    ...(d.similar?.length ? [['similar', 'Similar', String(d.similar.length)] as [string, string, string]] : []),
-    ...(d.collectionItems?.length ? [['collection', 'Collection', String(d.collectionItems.length)] as [string, string, string]] : [])];
-  const on = tabs.some(([id]) => id === tab) ? tab : 'overview';
-  // every part stays laid out (hidden) in the same place
-  const layer = (id: string) => `tc-layer${on === id ? ' on' : ''}`;
-  return (
-    <div className="tc-body">
-      <div className="tc-nav" role="tablist" aria-orientation="vertical">
-        {tabs.map(([id, label, count]) => (
-          <button key={id} type="button" className={`tc-navb${on === id ? ' on' : ''}`} data-t={id} role="tab" aria-selected={on === id} onClick={() => { setTab(id); setEps((x) => ({ ...x, allEps: false, home: x.home + 1 })); }}>
-            <Circ><Icon d={TC_ICON[id]} /></Circ><span className="l">{label}</span><span className="c">{count}</span>
-          </button>
-        ))}
-      </div>
-      <div className="tc-pane">
-        {tabs.map(([id]) => (id === 'overview' ? <Details key={id} d={d} cls={layer(id)} />
-          : id === 'cast' ? <Group key={id} id="tc-cast" title={null} cls={`group tc-sec ${layer(id)}`} railClass="rail ptrack tc-rail" items={d.cast} keyOf={(x) => `${x.name}|${x.role}`} card={CastCard} />
-          : id === 'similar' ? <Group key={id} id="tc-similar" title={null} cls={`group tc-sec ${layer(id)}`} railClass="rail ptrack tc-rail" items={d.similar} keyOf={(t) => t.key} card={trend} />
-          : id === 'collection' ? <Group key={id} id="tc-coll" title={null} cls={`group tc-sec ${layer(id)}`} railClass="rail ptrack tc-rail" items={d.collectionItems} keyOf={(t) => t.key} card={trend} />
-          : null))}
-        {tabs.some(([id]) => id === 'episodes') && <EpisodesPane d={d} st={eps} set={(s) => setEps((x) => ({ ...x, ...s }))} cls={layer('episodes')} />}
-      </div>
+    <div {...dial.host}>
+      {dial.dial}<span className={`tc-al${t.mine || t.watched || t.watchlist ? ' on' : ''}`}>{word}</span><span className="tc-al alt">List</span>
+      <div className="tdial-menu">{dial.plan(t.watchlist ? 'Planned' : 'Plan')}{dial.seen?.(t.watched ? 'Watched' : 'Watch')}{dial.rate(t.mine ? 'Rated' : 'Rate')}</div>
+      {dial.ringDial}
     </div>
   );
 }
 
-// a cast member as a poster-shaped card: photo, name, character
-function CastCard(x: Title['cast'][number]) {
+// carousel words
+function Head({ d, h }: { d: Title; h: 'h2' | 'h3' }) {
+  const { playTrailer } = useTitle();
+  const H = h;
+  return (
+    <>
+      <span className="hero-kick">{d.anime && d.type !== 'anime' ? 'Anime' : KIND[d.type]}</span>
+      <H className="hero-title">{d.title + (d.label ? ` · ${d.label}` : '')}</H>
+      {d.watching && <span className="tc-now">{['Watching now', d.watching.se >= 0 ? (d.type === 'anime' ? `E${d.watching.ep}` : `S${d.watching.se} E${d.watching.ep}`) : null,
+        d.watching.pct != null ? `${d.watching.pct} %` : null].filter(Boolean).join(' · ')}</span>}
+      <div className="tc-meta hero-meta">{metaOf(d, true)}<Cert d={d} /></div>
+      <Scores d={d}>
+        {d.trailer && <button type="button" className="tc-ytico" aria-label="Play the trailer" onClick={() => playTrailer(d.trailer!)}><YtLogo /><b className="tc-link">Trailer</b></button>}
+        <span className="tc-sep" /><StatusDial d={d} />
+      </Scores>
+    </>
+  );
+}
+
+// small view
+function TitlePeek({ d, expand, expandRef }: { d: Title; expand: () => void; expandRef: RRef<HTMLButtonElement> }) {
+  return (
+    <>
+      <div className="tpk-art" onClick={(e) => { if (!(e.target as Element).closest('button, a, .dialhost')) expand(); }}>
+        {(d.backdrop || d.poster) && <img className="hero-bg on" src={wide(d.backdrop || d.poster)} alt="" />}
+        <div className="hero-shade" />
+        <div className="tpk-head"><Head d={d} h="h2" /></div>
+      </div>
+      <button ref={expandRef} type="button" className="tc-cbtn tpk-grow" aria-label="Open the full page" onClick={expand}><Circ><Icon d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" /></Circ></button>
+      {d.overview && <div className="tpk-body"><p className="hero-story">{d.overview}</p></div>}
+    </>
+  );
+}
+
+// full page
+function TitleFull({ d, close, leave, scroller, player }: { d: Title; close: () => void; leave: () => void; scroller: React.RefObject<HTMLDivElement | null>; player: ReactNode }) {
+  const [nextSlot, setNextSlot] = useState<HTMLDivElement | null>(null);
+  // Similar grid
+  const [grid, setGrid] = useState(false);
+  const { backRef } = useTitle();
+  useEffect(() => {
+    if (!grid) return;
+    scroller.current?.scrollTo({ top: 0 });
+    backRef.current = () => { setGrid(false); return true; };
+    return () => { backRef.current = null; };
+  }, [grid, backRef, scroller]);
+  const [eps, setEps] = useState({ season: null as number | null, allEps: true, home: 0 });
+  useEffect(() => { setTitleNav({ back: () => (grid ? setGrid(false) : close()), leave }); }, [grid, close]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => setTitleNav(null), []);
+  const row = <T,>(id: string, title: string, items: T[], keyOf: (x: T) => string, card: (x: T) => ReactNode, onAll?: () => void) => (
+    <div key={id} className="tf-sec">
+      <Group id={`tf-${id}`} title={title} cls="group" railClass="rail ptrack" items={items} keyOf={keyOf} card={card} onAll={onAll} />
+    </div>
+  );
+  const top = <div className="tf-top"><TopBar inTitle={() => { backRef.current = null; leave(); }} /></div>;
+  if (grid) return (
+    <div className="tf-body tf-grid-page">
+      {top}
+      <ShelfGrid title={`Similar to ${d.title}`} items={d.similar} first="Similar" empty="Nothing similar yet." />
+    </div>
+  );
+  return (
+    <>
+      {top}
+      <section className="hero tf-hero">
+        <picture>
+          {d.poster && <source media="(max-width: 599px)" srcSet={d.poster.replace(/\/t\/p\/w\d+\//, '/t/p/w780/')} />}
+          {(d.backdrop || d.poster) && <img className="hero-bg on" src={wide(d.backdrop || d.poster)} alt="" />}
+        </picture>
+        <div className="hero-shade" />
+        <div className="hero-body"><Head d={d} h="h2" />{d.overview && <p className="hero-story">{d.overview}</p>}</div>
+        {d.type !== 'movie' && <div className="tf-next" ref={setNextSlot} />}
+        {player}
+      </section>
+      <div className="tf-body">
+        <section className="tf-sec tf-ov">
+          {d.overview && <Story key={d.key} d={d} />}
+          <Details d={d} cls="tf-details" />
+        </section>
+        {d.type !== 'movie' && !!d.seasons?.length && (
+          <section className="tf-sec tf-eps">
+            <EpisodesPane d={d} st={eps} set={(s) => setEps((x) => ({ ...x, ...s }))} cls="tf-epspane on" rows nextSlot={nextSlot} />
+          </section>
+        )}
+        {!!d.cast?.length && row('cast', 'Cast', d.cast, (x) => `${x.name}|${x.role}`, (x) => <CastCard x={x} opens={d.key.startsWith('tmdb:')} />)}
+        {!!d.similar?.length && row('similar', 'Similar', d.similar, (t) => t.key, trend, () => setGrid(true))}
+        {!!d.collectionItems?.length && row('collection', 'Collection', d.collectionItems, (t) => t.key, trend)}
+      </div>
+    </>
+  );
+}
+
+// cast card
+function CastCard({ x, opens }: { x: Title['cast'][number]; opens: boolean }) {
+  const { openPerson } = useTitle();
+  const go = () => openPerson({ id: x.id, name: x.name });
   return (
     <div className="tcard tcast" aria-label={`${x.name}${x.role ? ` · ${x.role}` : ''}`}>
-      <div className="tposter">{x.photo && <img src={x.photo} alt="" loading="lazy" />}</div>
+      <div className={`tposter${opens ? ' opens' : ''}`} {...(opens ? { role: 'button', tabIndex: 0, onClick: go, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } } } : {})}>
+        {x.photo && <img src={x.photo} alt="" loading="lazy" />}
+      </div>
       <div className="names"><span className="name">{x.name}</span><span className="host">{x.role || ''}</span></div>
     </div>
   );
 }
 
+// actor card
+type Person = { id: number; name: string; dept: string; birthday: string | null; deathday: string | null; place: string | null; bio: string | null; photo: string | null;
+  knownFor: Tile[]; acting: Tile[]; crew: { label: string; items: Tile[] } | null };
+function PersonView({ p }: { p: PersonRef }) {
+  const [got, setGot] = useState<{ v?: Person; err?: string } | null>(null);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    let live = true;
+    getJ<Person>(p.id ? `/api/person/${p.id}` : `/api/person?name=${encodeURIComponent(p.name || '')}`)
+      .then((v) => live && setGot({ v }), (e: Error) => live && setGot({ err: e.message }));
+    return () => { live = false; };
+  }, [p.id, p.name]);
+  const v = got?.v;
+  const age = (from: string, to?: string | null) => { const a = new Date(from), b = to ? new Date(to) : new Date(); return b.getFullYear() - a.getFullYear() - (b < new Date(b.getFullYear(), a.getMonth(), a.getDate()) ? 1 : 0); };
+  const facts = v && [v.birthday ? (v.deathday ? `${fmtDay(v.birthday)} – ${fmtDay(v.deathday)} (${age(v.birthday, v.deathday)})` : `Born ${fmtDay(v.birthday)} (${age(v.birthday)})`) : null, v.place].filter(Boolean).join(' · ');
+  const row = (id: string, title: string, items: Tile[]) => !!items.length && <Group key={id} id={`pp-${id}`} title={title} cls="group" railClass="rail ptrack" items={items} keyOf={(t) => t.key} card={trend} />;
+  return (
+    <aside className="tpanel tpeek tpp" role="dialog" aria-modal="true" aria-label={v?.name || p.name || 'Person'}>
+      <div className="tp-body">
+        {!got ? <div className="tp-note">Loading…</div> : got.err || !v ? <div className="tp-note">{`Couldn't load ${p.name || 'this person'} (${got.err || 'not found'}).`}</div> : <>
+          <div className="tpp-head">
+            <div className="tpp-photo">{v.photo && <img src={v.photo} alt="" />}</div>
+            <div className="tpp-h">
+              <span className="hero-kick">{v.dept}</span>
+              <h2 className="hero-title">{v.name}</h2>
+              {facts && <div className="tc-meta hero-meta">{facts}</div>}
+              {v.bio && <><p className={`tpp-bio${more ? '' : ' clamp'}`}>{v.bio}</p>{v.bio.length > 420 && <button type="button" className="tc-more" onClick={() => setMore(!more)}>{more ? 'Less' : 'More'}</button>}</>}
+            </div>
+          </div>
+          <div className="tpp-rows">
+            {row('known', 'Known for', v.knownFor)}
+            {row('acting', 'Acted in', v.acting)}
+            {v.crew && row('crew', v.crew.label, v.crew.items)}
+          </div>
+        </>}
+      </div>
+    </aside>
+  );
+}
+
+// story
+function Story({ d }: { d: Title }) {
+  const p = useRef<HTMLParagraphElement>(null), [full, setFull] = useState(false), [cut, setCut] = useState(false);
+  useLayoutEffect(() => { const x = p.current; setCut(!!x && x.scrollHeight > x.clientHeight + 1); }, []);
+  return (
+    <div className="tf-story">
+      {d.tagline && <p className="tc-tagline">{d.tagline}</p>}
+      <p ref={p} className={`tc-overview${full ? ' full' : ''}`}>{d.overview}</p>
+      {cut && !full && <button type="button" className="tf-more" onClick={() => setFull(true)}>See more</button>}
+    </div>
+  );
+}
 // Details as compact cells, three to a row: the type's own six, where it's from, your history
 function Details({ d, cls }: { d: Title; cls: string }) {
   const { reloadTitle, pickDay } = useTitle();
+  const phone = usePhone();
   const editRef = useRef<HTMLButtonElement>(null);
-  // when a "+N" is shown, the full list is for screen readers
-  const cell = (k: string, v: ReactNode, full?: string | null, c?: string) => (
+  const cell = (k: string, v: ReactNode, full?: string | null, c?: string) => phone && !v ? null : (
     <div key={k} className="meter" aria-label={full && full !== v ? `${k} ${full}` : undefined}>
       <span className="meter-k">{k}</span><span className={`meter-v${c ? ` ${c}` : ''}`}>{!v ? DASH : typeof v === 'string' ? <Tight text={v} /> : v}</span>
     </div>
@@ -424,6 +506,9 @@ function Details({ d, cls }: { d: Title; cls: string }) {
   const day = (iso: string) => new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   const f = d.facts || {}, str = (k: string) => (f[k] == null ? undefined : String(f[k]));
   const [stu, stuAll] = names(str('studio')?.split(', '));
+  const name = (type: 'language' | 'region', codes: string | undefined) => {
+    try { const n = new Intl.DisplayNames(['en'], { type }); return codes?.split(', ').map((c) => n.of(type === 'language' ? c.toLowerCase() : c)).join(', ') || null; } catch { return codes || null; }
+  };
   const cells: ReactNode[] = [];
   if (d.type === 'movie') {
     const m = d.money || { budget: null, revenue: null }, [dir, dirAll] = names(d.people?.names), [wri, wriAll] = names(d.writers);
@@ -433,25 +518,31 @@ function Details({ d, cls }: { d: Title; cls: string }) {
     const n = d.seasons?.filter((x) => x.n > 0).length, eps = (f.episodes as number | null) || d.episodes;
     const next = d.next?.date ? cell('Next episode', `${d.next.season != null ? `S${d.next.season} E${d.next.ep} · ` : ''}${day(d.next.date)}`, null, 'txt acc')
       : cell(/ended|canceled|finished/i.test(d.status || '') ? 'Ended' : 'Last aired', fmtDay(str('lastAired')), null, 'txt');
+    // phone: aired line
+    const y0 = d.released?.slice(0, 4), y1 = str('lastAired')?.slice(0, 4), soon = !!d.released && new Date(d.released) > new Date();
+    const dates = phone ? [cell('Aired', !y0 ? null : soon ? `Starts ${fmtDay(d.released)}` : /ended|canceled|finished/i.test(d.status || '') ? `${y0}${y1 && y1 !== y0 ? ` – ${y1}` : ''} · Ended` : `Since ${y0}`, null, 'txt'),
+      d.next?.date ? next : null] : [cell('First aired', fmtDay(d.released), null, 'txt'), next];
     const count = cell('Episodes', eps ? `${eps}${d.type === 'tv' && n ? ` · ${n} season${n === 1 ? '' : 's'}` : ''}` : null, null, 'txt');
-    if (d.type === 'anime') cells.push(cell('First aired', fmtDay(d.released), null, 'txt'), next, count, cell('Season', str('season'), null, 'txt'),
-      cell('Format', d.format ? String(d.format).replace(/^./, (c) => c.toUpperCase()) : null, null, 'txt'), cell('Studio', stu, stuAll, 'txt'));
-    else {
+    // anime facts
+    if (d.type === 'anime') {
+      const [by, byAll] = names(d.people?.names), [net, netAll] = names(str('network')?.split(', ')), rank = (f.rank as number | null) || d.mal?.rank;
+      const lang = name('language', str('language'));
+      cells.push(...[...dates, count, cell('Studio', stu, stuAll, 'txt'),
+        by && cell('Created by', by, byAll, 'txt'), net && cell('Network', net, netAll, 'txt'), str('season') && cell('Season', str('season'), null, 'txt'),
+        d.format && cell('Format', String(d.format).replace(/^./, (c) => c.toUpperCase()), null, 'txt'), str('source') && cell('Source', str('source'), null, 'txt'),
+        lang && cell('Language', lang, null, 'txt'), rank && cell('MAL rank', `#${Number(rank).toLocaleString('en-GB')}`, null, 'txt')].filter(Boolean).slice(0, 9));
+    } else {
       const [by, byAll] = names(d.people?.names), [net, netAll] = names(str('network')?.split(', '));
-      cells.push(cell('First aired', fmtDay(d.released), null, 'txt'), next, count, cell('Created by', by, byAll, 'txt'), cell('Network', net, netAll, 'txt'), cell('Studio', stu, stuAll, 'txt'));
+      cells.push(...dates, count, cell('Created by', by, byAll, 'txt'), cell('Network', net, netAll, 'txt'), cell('Studio', stu, stuAll, 'txt'));
     }
   }
-  // where it's from (country and language by name, the awards' first line), then your history with it
-  const name = (type: 'language' | 'region', codes: string | undefined) => {
-    try { const n = new Intl.DisplayNames(['en'], { type }); return codes?.split(', ').map((c) => n.of(type === 'language' ? c.toLowerCase() : c)).join(', ') || null; } catch { return codes || null; }
-  };
   const aw = d.scores?.awards, y = d.you || {};
   const when = (t: number | null | undefined) => (t ? fmtDay(new Date(t).toISOString()) : null);
-  // anime: what it was adapted from, and its MyAnimeList rank, instead of country (always Japan) and awards
-  if (d.type === 'anime') cells.push(cell('Source', str('source'), null, 'txt'), cell('Language', name('language', str('language')), null, 'txt'),
-    cell('MAL rank', f.rank ? `#${Number(f.rank).toLocaleString('en-GB')}` : null, null, 'txt'));
-  else cells.push(cell('Country', name('region', str('country')), null, 'txt'), cell('Language', name('language', str('language')), null, 'txt'),
-    cell('Awards', aw ? aw.split('. ')[0].replace(/\.$/, '') : null, aw, 'txt'));
+  const award = aw ? aw.split('. ')[0].replace(/\.$/, '') : null;
+  if (d.type !== 'anime') cells.push(...(phone ? [cell('From', [name('region', str('country')), name('language', str('language'))].filter(Boolean).join(' · '), null, 'txt')]
+    : [cell('Country', name('region', str('country')), null, 'txt'), cell('Language', name('language', str('language')), null, 'txt'), cell('Awards', award, aw, 'txt')]));
+  // phone: your history line
+  let you: ReactNode[] = [];
   if (d.type === 'movie') {
     // the latest watch's date can be changed here (a date-unknown one, from marking or rating it, too)
     const last = y.moviePlays?.[0];
@@ -466,8 +557,20 @@ function Details({ d, cls }: { d: Title; cls: string }) {
         onClick={() => pickDay({ anchor: editRef.current!, air: last.approx === 1 ? null : last.at, save: (t) => retime(t as number), keepTime: timed(last),
           airDay: airAt({ air: d.released }), airLabel: 'Release date' })}>{last.approx === 1 ? 'Add date' : when(last.at)}</button>
     ) : null;
-    cells.push(cell('Watched', y.plays ? `${y.plays}×` : null, null, 'txt'), cell('First watched', when(y.first), null, 'txt'), cell('Last watched', lw, null, 'txt'));
-  } else cells.push(cell('Watched', y.episodes ? `${y.episodes} ep${y.episodes === 1 ? '' : 's'}` : null, y.plays ? `${y.plays} plays` : null, 'txt'),
+    if (phone) you = [y.plays ? `${y.plays}× watched` : null, y.first ? `first ${when(y.first)}` : null, lw && <span key="l">{last!.approx === 1 ? '' : 'last '}{lw}</span>];
+    else cells.push(cell('Watched', y.plays ? `${y.plays}×` : null, null, 'txt'), cell('First watched', when(y.first), null, 'txt'), cell('Last watched', lw, null, 'txt'));
+  } else if (phone) you = [y.episodes ? `${y.episodes} ep${y.episodes === 1 ? '' : 's'}` : null, y.first ? `started ${when(y.first)}` : null, y.last ? `last ${ago(y.last)} ago` : null];
+  else cells.push(cell('Watched', y.episodes ? `${y.episodes} ep${y.episodes === 1 ? '' : 's'}` : null, y.plays ? `${y.plays} plays` : null, 'txt'),
     cell('Started', when(y.first), null, 'txt'), cell('Last watched', y.last ? `${when(y.last)} · ${ago(y.last)} ago` : null, null, 'txt'));
+  if (phone) {
+    const yl = you.filter(Boolean);
+    return (
+      <div className="tf-facts">
+        {cells.some(Boolean) && <div className="tf-flist">{cells}</div>}
+        {award && <p className="tf-award" title={aw!}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></svg>{award}</p>}
+        {!!yl.length && <p className="tf-you"><b>You</b><span>{yl.flatMap((x, i) => (i ? [' · ', x] : [x]))}</span></p>}
+      </div>
+    );
+  }
   return <div className={`glass dpanel dcells tc-details ${cls}`}>{cells}</div>;
 }

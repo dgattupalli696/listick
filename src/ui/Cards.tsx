@@ -101,7 +101,7 @@ export function useRingRate(o: Rating) {
     },
     onPointerUp: end, onPointerCancel: end,
   };
-  // a phone never rates by dragging the small circle (a swipe or a scroll across it rated by mistake): a plain tap opens the big
+  // a phone never rates by dragging the small circle: a plain tap opens the big
   // dial (pointer-up waited seconds on iPhones), and a scroll that starts on it just scrolls
   const tap = { onClick: (e: React.MouseEvent) => { e.stopPropagation(); setDial(true); } };
   return { handlers: phone ? tap : handlers, dial: dial ? <RateDial was={o.cur()} show={o.show} reset={o.reset} save={o.save} close={() => setDial(false)} /> : null };
@@ -177,7 +177,7 @@ export function WideCard({ w, cls = '', children }: { w: Wide; cls?: string; chi
 
 // a Continue watching card: one circle (⋯, on hover) like Plan to watch's. A tap brings its two actions: ✕ removes the card
 // (nothing recorded), the watched mark beside it marks it watched (a play goes into History). Either way the card stays away until
-// Stremio has newer progress for it; after 3 s they fold back into ⋯
+// there is newer progress for it; after 3 s they fold back into ⋯
 export function ResumeCard({ w }: { w: Wide }) {
   const { reload } = useHome();
   const ask = useTwoTap();
@@ -271,7 +271,7 @@ export function HistCard({ w }: { w: Wide }) {
 }
 
 // A poster card, the same everywhere titles are shown:
-//   top-left   a Coming-soon date when there is one (the sites' scores are in the title panel)
+//   top-left   a Coming-soon date when there is one
 //   bottom-right  one circle saying where you are with the title (PosterArt)
 //   the poster itself opens the title panel; on touch screens the panel holds the actions
 export function TrendCard({ t, dismiss }: { t: Tile; dismiss?: (key: string) => void }) {
@@ -350,7 +350,7 @@ export function usePosterDial(given: Tile, { dismiss, changed, closed, cls = 'tp
     if (err) { apply({ watchlist: !on }); return alert(`Plan to watch: ${err}`); }
     after();
   }
-  // a poster marks it watched with the date unknown (never "now"); the title card's Overview sets the date
+  // a poster marks it watched with the date unknown (never "now"); the title page's details set the date
   async function setWatched(on: boolean, at?: string) {
     touchKey(t.key);
     const got: { left?: number } = {};
@@ -372,7 +372,7 @@ export function usePosterDial(given: Tile, { dismiss, changed, closed, cls = 'tp
   // your rating fills the accent ring to it; the watched mark fills it as far as you've watched (a movie: all of it, a show:
   // its share of episodes); the bookmark and + keep the plain white look
   const seenPart = !t.mine && t.watched ? (t.type === 'movie' ? 1 : t.progress) : null;
-  // the one hover text left in the app: what the circle can't say, a show's next episode ("Next S1 E5"), else the day you last
+  // the hover text: what the circle can't say, a show's next episode ("Next S1 E5"), else the day you last
   // watched it ("11 Oct 26")
   const last = t.lastAt ? new Date(t.lastAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' }) : null;
   const tip = (t.mine || t.watched) && (t.type !== 'movie' && t.next ? `Next ${t.next}` : last);
@@ -390,6 +390,7 @@ export function usePosterDial(given: Tile, { dismiss, changed, closed, cls = 'tp
     </button>
   );
   return {
+    t,
     host: { ref: art, className: `${cls} dialhost${open ? ' open' : ''}${dragging ? ' dragging' : ''}`, onMouseLeave: () => closed?.() },
     plan: (short?: string) => opt('bookmark', 'Plan to watch', !!t.watchlist, false, 0, () => void toggleWatchlist(), short),
     seen: t.type === 'movie' ? (short?: string) => opt('watched', 'Watched', !!t.watched, seen.armed, 0,

@@ -1,6 +1,6 @@
 'use client';
 // Listick's page as React. This root holds who's signed in, whether Appearance's sheet is open, the sign-in card and the
-// page (Home, a kind's page, Lists, Stats or Settings), and starts things off:
+// page (Home, a kind's page, Lists, a row, Calendar, History, Stats or Settings), and starts things off:
 // an emailed or invite link opens its own form, otherwise the session decides (sign in, or the page).
 import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
@@ -15,6 +15,7 @@ const ListPage = dynamic(() => import('./Lists').then((m) => m.ListPage));
 const RowPage = dynamic(() => import('./Shelf').then((m) => m.RowPage));
 const Stats = dynamic(() => import('./Stats').then((m) => m.Stats));
 const Calendar = dynamic(() => import('./Calendar').then((m) => m.Calendar));
+const HistoryPage = dynamic(() => import('./History').then((m) => m.HistoryPage));
 const Settings = dynamic(() => import('./Settings').then((m) => m.Settings));
 const SignIn = dynamic(() => import('./SignIn').then((m) => m.SignIn));
 const AddToList = dynamic(() => import('./AddToList').then((m) => m.AddToList));
@@ -27,7 +28,7 @@ type AppState = {
   look: Sheet; openLook: (from: HTMLElement | null) => void; closeLook: () => void;
   // the Settings page, on a section (its id: account, import…)
   openSettings: (section?: string) => void;
-  // the account button's second tap arms sign-out for 3 s (it turns red with a sign-out icon); a tap then signs out
+  // armed: sign-out is armed for 3 s (the account button turns red with a sign-out icon); a tap then signs out
   armed: boolean; tapAcct: () => void; signOut: () => Promise<void>;
   // the side menu's name: a tap arms sign-out for 3 s, a tap then signs out
   armOut: () => void;
@@ -125,7 +126,7 @@ export function App({ children }: { children?: ReactNode }) {
           <TopBar />
           <div className="offline" id="offline" role="status" hidden={!offline}><span className="dot bad" /><span>Listick isn&apos;t answering; showing the last data.</span></div>
           {me ? (path === '/lists' ? view(<Lists />) : path.startsWith('/lists/') ? view(<ListPage key={path} id={decodeURIComponent(path.slice(7))} />)
-            : path.startsWith('/row/') ? view(<RowPage key={path} id={decodeURIComponent(path.slice(5))} />) : path === '/stats' ? view(<Stats />) : path === '/calendar' ? view(<Calendar />) : path.startsWith('/settings') ? view(<Settings />) : <Home view={view} kind={kind} />) : view(null)}
+            : path.startsWith('/row/') ? view(<RowPage key={path} id={decodeURIComponent(path.slice(5))} />) : path === '/stats' ? view(<Stats />) : path === '/calendar' ? view(<Calendar />) : path === '/history' ? view(<HistoryPage />) : path.startsWith('/settings') ? view(<Settings />) : <Home view={view} kind={kind} />) : view(null)}
         </div>
       </div>
       <PhoneTabs />

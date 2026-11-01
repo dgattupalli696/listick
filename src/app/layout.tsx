@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { App } from "@/ui/App";
-// the fonts ship with the app (open licence, @fontsource-variable), so no visit asks another site for them
+// the fonts ship with the app (open licence, @fontsource-variable)
 import "@fontsource-variable/archivo/wdth.css";
 import "@fontsource-variable/dm-sans";
 import "@fontsource-variable/jetbrains-mono";

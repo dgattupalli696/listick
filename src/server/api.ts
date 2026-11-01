@@ -18,9 +18,9 @@ import { statsOf, type Period } from './stats';
 import { importsOf, queueImport } from './import/run';
 import { playCount } from './cards';
 import { FOR_YOU, catalogList, catalogSources } from './catalogs';
-import { details, season } from './details';
+import { details, person, season } from './details';
 import { canonKey, resolve } from './mapping';
-import { hero, landingPosters, pageData, rowAll, search, shelves } from './page';
+import { hero, historyPage, landingPosters, pageData, rowAll, search, shelves } from './page';
 import { insertPlay, mark, rate, retime } from './plays';
 import { makeUser, noUsers, placeholderEmail } from './owner';
 import { allUsers, getState, getUser, liveOf, ownerId, setProfile, setState } from './store';
@@ -119,7 +119,7 @@ async function signIn(login: unknown, password: unknown) {
 // from a fresh baseline instead of reading as a burst of plays
 const forgetSource = (uid: string, sources: string[]) => q.run('delete from sync_state where user_id = ? and source = any(?)', uid, sources);
 // the apps a user can make an API key for (one key each) and the scopes of the public API (docs/api.md) each key opens: lists
-// (your lists and their titles), calendar (the feed). A new app is one line here
+// (your lists and their titles), calendar (the feed), plays (what was played)
 const APPS = [{ id: 'catalogs', name: 'Stremio addon', scopes: ['lists'] }, { id: 'calendar', name: 'Calendar feed', scopes: ['calendar'] },
   { id: 'jellyfin', name: 'Jellyfin', scopes: ['plays'] }, { id: 'seanime', name: 'Seanime', scopes: ['lists', 'plays'] }];
 // a key's user and app, if the key is real
@@ -213,14 +213,13 @@ async function internal(req: Request, url: URL, method: string, uid: string) {
       return json(req, 200, { changed: await retime(uid, key, b.season as number, b.episode as number, b.from, Math.round(b.at)) });
     }
     if (wm[1] === 'rate') {
-      // 1-10 in 0.1 steps (Trakt's imports are whole numbers)
+      // 1-10 in 0.1 steps
       const r = b.rating == null ? null : Math.round(Number(b.rating) * 10) / 10;
       if (r != null && !(Number.isFinite(r) && r >= 1 && r <= 10)) return json(req, 400, { error: 'rating 1-10 (0.1 steps) or null' });
       const se = b.season ?? -1, ep = b.episode ?? -1;
       if (!Number.isInteger(se) || !Number.isInteger(ep) || ((ep as number) >= 0 && (se as number) < 0)) return json(req, 400, { error: 'season, episode: integers (-1 for none)' });
       const changed = await rate(uid, key, r, se as number, ep as number);
-      // rating a movie you have no play of means you saw it: one play with the date unknown (approx 1, kept on its release
-      // date like the imports'), never "now"; its date can be set later
+      // rating a movie you have no play of means you saw it: one play with the date unknown (approx 1, on unknownDay's day)
       if (r != null && se === -1 && key.startsWith('tmdb:movie:') && !await playCount(uid, key)) {
         const at = await unknownDay(key);
         if (at) await insertPlay(uid, key, -1, -1, at, 1, 'manual');
@@ -230,8 +229,7 @@ async function internal(req: Request, url: URL, method: string, uid: string) {
     const eps = Array.isArray(b.episodes) ? (b.episodes.filter(Number.isInteger) as number[]).slice(0, 500) : [-1];
     if (!Number.isInteger(b.season ?? -1) || !eps.length) return json(req, 400, { error: 'season, episodes' });
     if (!await getTitle(key)) await details(key).catch(() => null);
-    // at 'unknown': watched, date not known (a poster's Watched; the title card sets the date): one play on the release day
-    // (unknownDay), approx 1, like the imports' and a first rating's
+    // at 'unknown': watched, date not known (a poster's Watched): on the release day (unknownDay), approx 1
     let approx = b.unknown === true ? 1 : 0;   // unknown: a given time (an episode's air day) that only stands in for the date
     let at = b.at;
     if (at === 'unknown') {
@@ -319,7 +317,7 @@ async function route(req: Request, url: URL, p: string): Promise<Response | null
     return json(req, 404, { error: 'not found' });
   }
   // what the page needs to know before signing in: this instance's name, the captcha's site key, whether email works, whether
-  // the weather shows; and which optional sources this instance has keys for, so About credits only those
+  // the weather shows; and which optional sources this instance has keys for
   if (p === '/api/config' && req.method === 'GET') return json(req, 200, { name: appName(), captcha: captchaOn() ? env('TURNSTILE_SITE_KEY') : null, mail: mailOn(), weather: env('LISTICK_WEATHER') === 'on',
     sources: { mal: !!env('MAL_CLIENT_ID'), omdb: !!env('OMDB_API_KEY'), tvdb: !!env('TVDB_API_KEY') } });
   // the signed-out page's poster strip: the first posters of two shared rows, nothing of anyone's
@@ -578,7 +576,7 @@ async function route(req: Request, url: URL, p: string): Promise<Response | null
     await setState(g.user.id, 'onboarding', 'done', { at: Date.now(), choice: 'kitsu' });
     return json(req, 200, { id, entries: anime.length });
   }
-  // starting fresh: the offer isn't made again (imports stay in Account › Your data)
+  // starting fresh: the offer isn't made again (imports stay in Settings › Import)
   if (p === '/api/import/fresh') {
     const g = await guard(req); if (g.error) return g.error;
     await setState(g.user.id, 'onboarding', 'done', { at: Date.now(), choice: 'fresh' });
@@ -699,6 +697,18 @@ async function route(req: Request, url: URL, p: string): Promise<Response | null
     const per = url.searchParams.get('period') || '12m';
     if (!/^(12m|all|\d{4})$/.test(per)) return json(req, 400, { error: 'period: 12m, all or a year' });
     return json(req, 200, await statsOf(g.user.id, per as Period));
+  }
+  // cast member card
+  const pm = p.match(/^\/api\/person(?:\/(\d+))?$/);
+  if (pm && req.method === 'GET') {
+    const g = await reader(req); if (g.error) return g.error;
+    const out = await person(g.user.id, { id: pm[1] ? Number(pm[1]) : undefined, name: url.searchParams.get('name')?.slice(0, 100) || undefined });
+    return out ? json(req, 200, out) : json(req, 404, { error: 'no such person' });
+  }
+  if (p === '/api/history' && req.method === 'GET') {
+    const g = await reader(req); if (g.error) return g.error;
+    const before = Number(url.searchParams.get('before')) || Date.now() + 86400000;
+    return json(req, 200, await historyPage(g.user.id, before, Number(url.searchParams.get('id')) || 0));
   }
   // the Airing page; ?plan=1: Plan to watch dates
   if (p === '/api/airing' && req.method === 'GET') {

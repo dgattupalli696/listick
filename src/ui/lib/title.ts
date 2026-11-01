@@ -1,18 +1,19 @@
 // A title's card (/api/title/<key>): what the title panel shows, loaded ahead when you point at a card.
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useSyncExternalStore } from 'react';
 import { getJ } from './api';
 import type { Ref, Tile, TitleType } from './media';
 
 export type Season = { n: number; name: string; episodes: number | null; year: number | null };
 export type Play = { at: number; approx?: number | null; source?: string; plays?: number };
 export type Episode = { ep: number; name: string | null; air: string | null; runtime: number | null; still: string | null; overview: string | null; tvdb?: boolean; se?: number; tep?: number;
+  score?: number | null; votes?: number; directors?: string[]; writers?: string[]; guests?: { id: number; name: string; role: string | null; photo: string | null }[];
   watched?: Play | null; mine?: number | null };
 export type Title = {
-  key: string; type: TitleType; title: string; label: string | null; year: number | null; poster: string | null; backdrop: string | null;
+  key: string; type: TitleType; title: string; label: string | null; year: number | null; poster: string | null; backdrop: string | null; backdrops?: string[];
   rating: number | null; ratingSrc: string | null; overview: string | null; url: string | null; genres: string[]; runtime: number | null;
   released: string | null; status: string | null; tagline: string | null; seasons: Season[] | null; seasonsTvdb?: Season[] | null;
   next: { season?: number; ep?: number; date: string | null } | null; people: { label: string; names: string[] } | null;
-  cast: { name: string | undefined; role: string | null; photo: string | null }[]; imdb: string | null;
+  cast: { name: string | undefined; role: string | null; photo: string | null; id?: number | null }[]; imdb: string | null;
   scores?: { imdb: string | null; votes: string | null; rt: string | null; mc: string | null; awards: string | null; pages?: { rt: string | null; mc: string | null } } | null;
   certification: string | null; trailer: string | null; writers?: string[]; money?: { budget: number | null; revenue: number | null };
   anime?: boolean; mal?: { score: number | null; rank: number | null; url: string }; kitsu?: { score: number | null; url: string }; facts?: Record<string, string | number | null>;
@@ -24,8 +25,7 @@ export type Title = {
 };
 
 export const titleUrl = (key: string) => `/api/title/${encodeURIComponent(key)}`;
-// pointing at a title (or touching it) starts loading its card, so the click finds it ready; used once and only while fresh
-// (10 s), so a card never opens with marks from before a change
+// pointing at a title (or touching it) starts loading its card; used once and only while fresh (10 s)
 const prefetched = new Map<string, { at: number; p: Promise<Title> }>();
 export function prefetch(ref: Ref) {
   if (!('key' in ref)) return;
@@ -46,6 +46,16 @@ export async function loadTitle(ref: Ref) {
 export type PickArgs = { anchor: HTMLElement; air: number | null; save: (at: number | true, range: boolean, fromAir: boolean) => unknown; keepTime?: boolean;
   airDay?: number | true | null; airLabel?: string; run?: { label: string } | null };
 // backRef: what Back (and Escape) closes before the window itself, such as an episode's page; true when it closed something
-export type TitleState = { reloadTitle: () => Promise<void>; pickDay: (a: PickArgs) => void; playTrailer: (url: string) => void; backRef: { current: (() => boolean) | null } };
-export const TitleCtx = createContext<TitleState>({ reloadTitle: async () => {}, pickDay: () => {}, playTrailer: () => {}, backRef: { current: null } });
+// openPerson: a cast member's card (by TMDB's id, else by name)
+export type PersonRef = { id?: number | null; name?: string };
+export type TitleState = { reloadTitle: () => Promise<void>; pickDay: (a: PickArgs) => void; playTrailer: (url: string) => void; backRef: { current: (() => boolean) | null };
+  openPerson: (p: PersonRef) => void };
+export const TitleCtx = createContext<TitleState>({ reloadTitle: async () => {}, pickDay: () => {}, playTrailer: () => {}, backRef: { current: null }, openPerson: () => {} });
 export const useTitle = () => useContext(TitleCtx);
+
+// a title's full page: Back, and leave
+type TitleNav = { back: () => void; leave: () => void };
+let nav: TitleNav | null = null;
+const navSubs = new Set<() => void>();
+export const setTitleNav = (n: TitleNav | null) => { nav = n; navSubs.forEach((f) => f()); };
+export const useTitleNav = () => useSyncExternalStore((f) => { navSubs.add(f); return () => { navSubs.delete(f); }; }, () => nav, () => null);

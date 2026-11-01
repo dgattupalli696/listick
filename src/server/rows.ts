@@ -9,7 +9,7 @@ import { fillFromTmdb, fromKitsu, fromTmdb, prune, saveTitles, titlesOf, tmdbGen
 import type { KitsuList, MalList, Title, TmdbDetails, TmdbItem, TmdbPage, TmdbReleaseDates, TmdbWatchProviders } from './types';
 import { HOUR, env, msg } from './util';
 
-   // where you are: the title card's watch providers
+// the rows' region
 const ROW_REGION = 'US';
 // Kitsu's own "trending" is all-time favourites; a season's anime, most followed first, is what is actually hot
 const SEASONS = ['winter', 'winter', 'winter', 'spring', 'spring', 'spring', 'summer', 'summer', 'summer', 'fall', 'fall', 'fall'];
@@ -19,7 +19,7 @@ async function kitsuSeason(ahead = 0) {
 }
 const kitsuList = async (path: string) => asTmdb(await fillFromTmdb((await kitsu<KitsuList>(path)).data.map(fromKitsu)));
 const tmdbList = async (type: 'movie' | 'tv', path: string, keep: (x: TmdbItem) => boolean = () => true) => (await tmdb<TmdbPage>(path)).results.filter(keep).map(fromTmdb(type));
-// the catalogs (catalogs/) filter rows by genre, so each row is kept DEEP long; the page shows its first `page` titles
+// the catalogs (catalogs.ts) filter rows by genre, so each row is kept DEEP long; the page shows its first `page` titles
 const DEEP = 100;
 // the first `pages` pages of a TMDB list (20 a page), in order, without repeats
 async function tmdbPages(type: 'movie' | 'tv', path: string, pages = 5, keep: (x: TmdbItem) => boolean = () => true) {
@@ -38,8 +38,8 @@ const NO_TALK = 'without_genres=10767,10763,10762';   // talk shows, news and ki
 // from Japan, China or Korea, which TMDB can list in English (Cyberpunk: Edgerunners) or Chinese (donghua: Fights Break Sphere)
 const ANIME_LANDS = ['JP', 'CN', 'KR'];
 const notAnime = (x: TmdbItem) => !(x.genre_ids?.includes(16) && (x.original_language === 'ja' || !!x.origin_country?.some((c) => ANIME_LANDS.includes(c))));
-// popular: the most popular subscription shows on those services that premiered in the last 4 years (otherwise decades of
-// Law & Order and NCIS fill the row), about three US picks to one UK pick
+// popular: the most popular subscription shows on those services that premiered in the last 4 years, about three US picks to
+// one UK pick
 async function popularStreamingShows() {
   const since = new Date(Date.now() - 4 * 365 * 86400000).toISOString().slice(0, 10);
   const qs = (reg: Region) => `/discover/tv?watch_region=${reg}&with_watch_providers=${STREAMING[reg].join('|')}&with_watch_monetization_types=flatrate&sort_by=popularity.desc&vote_count.gte=50&first_air_date.gte=${since}&${NO_TALK}`;
@@ -67,7 +67,7 @@ async function trendingStreamingShows() {
 // kids: the same rules with TMDB's Kids genre (10762) for shows (left out of the rows above) and Family (10751) rated PG or
 // lower for movies. Trending kids shows: this week's trending kids shows on those services, topped up when few trend with
 // kids shows on them that aired an episode in the last 60 days; popular: the most popular ones that premiered in the last 8
-// years (kids shows run long, Bluey started 2018), three US picks to one UK pick
+// years, three US picks to one UK pick
 const KIDS_TV = 10762, FAMILY = 10751;
 const KIDS_MOVIE = `with_genres=${FAMILY}&certification_country=US&certification.lte=PG`;
 async function popularKidsShows() {
@@ -90,7 +90,7 @@ async function trendingKidsShows() {
     const on = (reg: Region) => (w?.results?.[reg]?.flatrate || []).some((p) => STREAMING[reg].includes(p.provider_id) || STREAMING.US.includes(p.provider_id));
     if (on('US') || on('GB')) out.push(fromTmdb('tv')(x));
   }
-  // topped up (after the page's 20) with kids shows on those services that aired an episode in the last 60 days
+  // topped up with kids shows on those services that aired an episode in the last 60 days
   if (out.length < DEEP) {
     const recent = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
     const more = await tmdbPages('tv', `/discover/tv?watch_region=US&with_watch_providers=${STREAMING.US.join('|')}&with_watch_monetization_types=flatrate&sort_by=popularity.desc&air_date.gte=${recent}&with_genres=${KIDS_TV}`, 4, notAnime).catch(() => []);
@@ -194,7 +194,6 @@ const newShows = () => tmdbPages('tv', `/discover/tv?first_air_date.gte=${day(-6
 // those with a poster (many announced shows have none yet)
 const premieres = () => tmdbPages('tv', `/discover/tv?first_air_date.gte=${day(1)}&first_air_date.lte=${day(60)}&with_original_language=en&sort_by=popularity.desc&${NO_TALK}`, 3, (x) => notAnime(x) && hasPoster(x));
 // anime airing this week: Japanese animation with an episode in the next 7 days, most popular first; not TMDB's Kids genre
-// (Doraemon and the like air every week for decades)
 const animeThisWeek = () => tmdbPages('tv', `/discover/tv?with_genres=16&with_original_language=ja&air_date.gte=${day(0)}&air_date.lte=${day(7)}&sort_by=popularity.desc&without_genres=10762`, 3);
 // top rated anime: MyAnimeList's score ranking when MAL_CLIENT_ID is set, else Kitsu's
 async function topRatedAnime() {
@@ -334,7 +333,7 @@ async function refreshServices(serviceRows: ServiceRows) {
     }
   }
   // anime on each service (Japanese animation, TMDB), series and films apart (the Anime page's Series | Movies): trending = the
-  // most popular series airing now (an episode in the last 90 days) and this year's films; popular = the most popular of each
+  // most popular series airing now (an episode in the last 90 days) and the last year's films; popular = the most popular of each
   const ANIME = 'with_genres=16&with_original_language=ja';
   const keys = async (list: Title[], n: number) => (await saveTitles(oncePerTitle(list))).slice(0, n).map((t) => t.key);
   for (const sv of SERVICES) {

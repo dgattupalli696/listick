@@ -5,7 +5,6 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { createPortal } from 'react-dom';
 import { PIcon, useRingRate, useTwoTap } from './Cards';
 import { getJ, postJ } from './lib/api';
-import { usePhone } from './lib/home';
 import { Icon } from './lib/icons';
 import { useTitle, type Episode, type PickArgs, type Play, type Title } from './lib/title';
 
@@ -65,7 +64,8 @@ async function rateIt(d: Title, n: number | null, season?: number, episode?: num
 }
 
 type St = { season: number | null; allEps: boolean; home: number };
-export function EpisodesPane({ d, st, set, cls }: { d: Title; st: St; set: (s: Partial<St>) => void; cls: string }) {
+// rows: the full page's list; nextSlot: Next up's place
+export function EpisodesPane({ d, st, set, cls, rows = false, nextSlot }: { d: Title; st: St; set: (s: Partial<St>) => void; cls: string; rows?: boolean; nextSlot?: HTMLElement | null }) {
   const { reloadTitle, pickDay, backRef } = useTitle();
   // a show TheTVDB splits differently: its seasons (the default, remembered per show) or TMDB's
   const [order, setOrderNow] = useState<'tvdb' | 'tmdb'>(() => { try { return localStorage.getItem(`ep-order:${d.key}`) === 'tmdb' ? 'tmdb' : 'tvdb'; } catch { return 'tvdb'; } });
@@ -87,17 +87,17 @@ export function EpisodesPane({ d, st, set, cls }: { d: Title; st: St; set: (s: P
     return () => { live = false; };
   }, [d, season, tv]);
   const got = res && res.d === d && res.season === season && res.tv === tv ? res : null, episodes = got?.list;
-  // an episode's page, open over the list (only within its season); Back and Escape leave it first
+  // episode card
   const [opened, setOpened] = useState<{ season: number; ep: number; home: number } | null>(null);
   const viewing = opened?.season === season && opened.home === st.home && episodes?.some((e) => e.ep === opened.ep) ? opened.ep : null;
   const shown = cls.includes(' on');
   useEffect(() => {
     if (!shown) return;
     if (viewing != null) backRef.current = () => { setOpened(null); return true; };
-    else if (st.allEps) backRef.current = () => { set({ allEps: false }); return true; };
+    else if (st.allEps && !rows) backRef.current = () => { set({ allEps: false }); return true; };
     else return;
     return () => { backRef.current = null; };
-  }, [shown, viewing, st.allEps, backRef, set]);
+  }, [shown, viewing, st.allEps, rows, backRef, set]);
   const [dir, setDir] = useState('');
   const openEp = (ep: number | null) => {
     setDir(ep != null && viewing != null && ep !== viewing ? (ep > viewing ? 'R' : 'L') : '');
@@ -151,14 +151,20 @@ export function EpisodesPane({ d, st, set, cls }: { d: Title; st: St; set: (s: P
 
   const sr = d.you?.seasonRatings?.[cur.n], avg = d.you?.seasonAvg?.[cur.n];
   const [railRef, strip] = useStrip(episodes);
-  if (viewing != null && episodes) return (
-    <div className={`tc-eps ${cls}`}><EpisodeView key={viewing} d={d} episodes={episodes} at={viewing} season={season} where={seasonName(cur)} markEpisodes={markEpisodes} open={openEp} dir={dir} /></div>
-  );
+  const home = st.season == null || st.season === (watchedIn.length ? Math.max(...watchedIn) : (seasons.find((s) => s.n > 0) || seasons[0]).n);
+  const nextOne = episodes?.find((x) => !x.watched && (!x.air || x.air <= today())) || episodes?.find((x) => !x.watched);
+  const card = viewing != null && episodes
+    ? <EpisodeView d={d} episodes={episodes} at={viewing} season={season} where={seasonName(cur)} markEpisodes={markEpisodes} open={openEp} dir={dir} /> : null;
+  const n = done(cur), inProgress = rows && n > 0 && !!cur.episodes && n < cur.episodes;
   return (
     <div className={`tc-eps ${cls}${st.allEps ? ' all' : ''}`}>
       <div className="tc-shead">
         <SeasonPick seasons={seasons} cur={cur} label={seasonName} done={done} pick={(n) => set({ season: n, allEps: false })} order={d.seasonsTvdb?.length ? { tv, set: setOrder } : undefined} />
         <div className="tc-sacts">
+          {inProgress && <>
+            <span className="tc-snum" role="img" aria-label={`${seasonName(cur)}: ${n} of ${cur.episodes} watched`}><Circ fill={(n / cur.episodes!) * 100}><b>{cur.n || 'SP'}</b></Circ></span>
+            <span className="rsep" aria-hidden="true" />
+          </>}
           {!tv && (d.type !== 'anime' || seasons.length > 1) && (
             <RateCircle key={`s${cur.n}`} cls="tc-erate season" state={sr ? ' on' : avg ? ' avg' : ''} v={sr || avg || 0} current={sr || 0}
               label={sr ? `Your rating of ${seasonName(cur)}` : avg ? 'Episode average · drag to rate' : 'Drag to rate'} save={(n) => rateIt(d, n, cur.n, -1)} />
@@ -166,7 +172,7 @@ export function EpisodesPane({ d, st, set, cls }: { d: Title; st: St; set: (s: P
           <button ref={markRef} type="button" className={`tc-cbtn${markAsk.armed ? ' confirm' : ''}`} aria-label={markLabel} title={markLabel} disabled={!!got?.err} onClick={markClick}>
             <Circ fill={markFill}>{markAsk.armed ? <PIcon name="close" /> : <PIcon name="watched" />}</Circ>
           </button>
-          {episodes?.length ? <>
+          {episodes?.length && !rows ? <>
             <span className={`rsep${st.allEps ? '' : ' tc-rowctl'}`} aria-hidden="true" />
             <button type="button" className={`rbtn${st.allEps ? ' on' : ' tc-rowctl'}`} aria-label={st.allEps ? 'Back to Next up' : 'All episodes'} aria-pressed={st.allEps}
               onClick={() => set({ allEps: !st.allEps })}><Icon d="M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z" size={15} /></button>
@@ -180,7 +186,7 @@ export function EpisodesPane({ d, st, set, cls }: { d: Title; st: St; set: (s: P
       {!got ? <p className="tc-note">Loading episodes…</p>
         : got.err ? <p className="tc-note">{`Couldn't load episodes (${got.err}).`}</p>
         : !episodes!.length ? <p className="tc-note">No episode list for this season yet.</p>
-        : st.allEps ? <>
+        : st.allEps || rows ? <>
           <div className="tc-eplist"><EpisodeRows d={d} episodes={episodes!} season={season} markEpisodes={markEpisodes} open={openEp} /></div>
         </>
         : <div className={`tc-split${episodes!.some((e) => !e.watched) ? '' : ' solo'}`}>
@@ -198,6 +204,8 @@ export function EpisodesPane({ d, st, set, cls }: { d: Title; st: St; set: (s: P
           </div>
           <EpisodeStrip d={d} episodes={episodes!} season={season} markEpisodes={markEpisodes} open={openEp} strip={strip} rail={railRef} />
         </div>}
+      {card}
+      {nextSlot && home && nextOne && episodes && createPortal(<HeroNext key={nextOne.ep} d={d} e={nextOne} episodes={episodes} season={season} markEpisodes={markEpisodes} open={openEp} />, nextSlot)}
     </div>
   );
 }
@@ -264,7 +272,7 @@ function NextCard({ d, e, episodes, season, markEpisodes, open }: { d: Title; e:
     <div className="tc-next">
       <div className="tc-nstill">
         <button type="button" className="tc-nopen" aria-label={e.name || `Episode ${e.ep}`} onClick={() => open(e.ep)}>
-          {(e.still || d.backdrop) && <img src={e.still || d.backdrop!} alt="" className={e.still ? undefined : 'fb'} />}
+          {epImg(d, e) && <img src={epImg(d, e)!} alt="" className={e.still ? undefined : 'fb'} />}
         </button>
         <span className={`tc-nexttag${playing(d, e, season) ? ' playing' : ''}`}>{playing(d, e, season) ? 'Watching' : ep.upcoming ? airs(e.air) : 'Next up'}</span>
         <div className="tc-markwrap">
@@ -281,6 +289,36 @@ function NextCard({ d, e, episodes, season, markEpisodes, open }: { d: Title; e:
           {e.tvdb && <a className="tc-tvdb" href="https://thetvdb.com" target="_blank" rel="noopener noreferrer">Info from TheTVDB.com</a>}
         </div>
         {e.overview && <p className="tc-nov">{e.overview}</p>}
+      </div>
+    </div>
+  );
+}
+
+// Next up on the cover
+function HeroNext({ d, e, episodes, season, markEpisodes, open }: { d: Title; e: Episode; episodes: Episode[]; season: number; markEpisodes: Mark; open: Open }) {
+  const ep = useEpisode(d, e, episodes, season, markEpisodes);
+  const mkRef = useRef<HTMLButtonElement>(null);
+  const name = e.name || `Episode ${e.ep}`, now = playing(d, e, season);
+  return (
+    <div className="hero-next">
+      <button type="button" className="hn-still" aria-label={name} onClick={() => open(e.ep)}>
+        {epImg(d, e) && <img src={epImg(d, e)!} alt="" className={e.still ? undefined : 'fb'} />}
+      </button>
+      <div className="hn-row">
+        <button type="button" className="hn-tx" onClick={() => open(e.ep)}>
+          <span className={`hn-k${now ? ' now' : ''}`}>{now ? 'Watching' : ep.upcoming ? airs(e.air) : 'Up next'}{` · ${season ? `S${season} ` : ''}E${e.ep}`}</span>
+          <b>{name}</b>
+          <span className="hn-d">{[ep.upcoming ? null : epDay(e.air), e.runtime ? `${e.runtime}m` : null].filter(Boolean).join(' · ')}</span>
+        </button>
+        <div className="hn-acts">
+          {!ep.upcoming && <div className="tep-act"><RateCircle cls="tc-erate" state={e.mine ? ' on' : ''} v={e.mine || 0} current={e.mine || 0} label={e.mine ? `Your rating ${e.mine.toFixed(1)}` : 'Drag to rate'}
+            save={(n) => rateIt(d, n, e.se ?? season, e.tep ?? e.ep)} /><span className={`tc-al${e.mine ? ' on' : ''}`}>{e.mine ? 'Rated' : 'Rate'}</span></div>}
+          <div className="tep-act">
+            <button ref={mkRef} type="button" className={`tc-mark${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel} disabled={ep.upcoming}
+              onClick={() => ep.tick(mkRef.current)}><Circ><TickIcon armed={ep.ask.armed} upcoming={ep.upcoming} /></Circ></button>
+            <span className={`tc-al${ep.ask.armed ? ' bad' : ''}`}>{ep.ask.armed ? 'Remove?' : ep.upcoming ? 'Not out' : 'Watch'}</span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -328,7 +366,7 @@ function StripTile({ d, e, episodes, season, markEpisodes, open, next }: { d: Ti
     <div className={`tc-se${e.watched ? ' seen' : ''}${next ? ' next' : ''}`}>
       <div className="tc-ses">
         <button type="button" className="tc-sopen" aria-label={name} onClick={() => open(e.ep)}>
-          {(e.still || d.backdrop) && <img src={e.still || d.backdrop!} alt="" loading="lazy" className={e.still ? undefined : 'fb'} />}
+          {epImg(d, e) && <img src={epImg(d, e)!} alt="" loading="lazy" className={e.still ? undefined : 'fb'} />}
           {e.overview && <span className="tc-sov"><b>{[ep.upcoming ? airs(e.air) : epDay(e.air), e.runtime ? `${e.runtime}m` : null].filter(Boolean).join(' · ')}</b><span>{e.overview}</span></span>}
         </button>
         {playing(d, e, season) && <span className="tc-nexttag playing">Watching</span>}
@@ -347,6 +385,8 @@ function StripTile({ d, e, episodes, season, markEpisodes, open, next }: { d: Ti
 }
 
 // the episode a player says is playing
+// episode image
+const epImg = (d: Title, e: Episode) => e.still || (d.backdrops?.length ? d.backdrops[e.ep % d.backdrops.length] : d.backdrop || d.poster);
 const playing = (d: Title, e: Episode, season: number) => !!d.watching && d.watching.se === (e.se ?? season) && d.watching.ep === (e.tep ?? e.ep);
 type Mark = (eps: number[], watched: boolean, at?: number | null, times?: (number | null)[]) => Promise<unknown>;
 type Open = (ep: number | null) => void;
@@ -400,7 +440,7 @@ const TickIcon = ({ armed, upcoming }: { armed: boolean; upcoming: boolean }) =>
 function EpisodeRow({ d, e, episodes, next, season, markEpisodes, open }: { d: Title; e: Episode; episodes: Episode[]; next: boolean; season: number; markEpisodes: Mark; open: Open }) {
   const ep = useEpisode(d, e, episodes, season, markEpisodes);
   const mkRef = useRef<HTMLButtonElement>(null);
-  const phone = usePhone(), w = e.watched;
+  const w = e.watched;
   const tick = (
     <div className="tc-markwrap">
       <button ref={mkRef} type="button" className={`tc-mark${w ? ' on' : ''}${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel} disabled={ep.upcoming}
@@ -412,9 +452,9 @@ function EpisodeRow({ d, e, episodes, next, season, markEpisodes, open }: { d: T
   return (
     <div className={`tc-ep${w ? ' seen' : ''}${ep.upcoming ? ' soon' : ''}${next ? ' next' : ''}`} onClick={() => open(e.ep)}>
       <div className="tc-still">
-        {(e.still || d.backdrop) && <img src={e.still || d.backdrop!} alt="" loading="lazy" className={e.still ? undefined : 'fb'} />}
+        {epImg(d, e) && <img src={epImg(d, e)!} alt="" loading="lazy" className={e.still ? undefined : 'fb'} />}
         {next && <span className="tc-nexttag">Next up</span>}
-        {!phone && tick}
+        {tick}
       </div>
       <div className="tc-eptx">
         <button type="button" className="tc-eptop tc-epopen" onClick={(x) => { x.stopPropagation(); open(e.ep); }}>
@@ -422,25 +462,18 @@ function EpisodeRow({ d, e, episodes, next, season, markEpisodes, open }: { d: T
         </button>
         {e.overview && <p className="tc-epov">{e.overview}</p>}
       </div>
-      {phone && tick}
     </div>
   );
 }
 
-// an episode's page, in the window over the list: Back, where it is (Season 2 · E3), the previous and next ones (on a phone a
-// sideways swipe too); the name with its air date and length, your rating and the tick on the same line (each named beside it,
-// the watched date opens the date wheels); then the still beside the story in full. A phone stacks it, the still first
+// episode card
 function EpisodeView({ d, episodes, at, season, where, markEpisodes, open, dir }: { d: Title; episodes: Episode[]; at: number; season: number; where: string; markEpisodes: Mark; open: Open; dir: string }) {
   const i = episodes.findIndex((x) => x.ep === at), e = episodes[i], prev = episodes[i - 1], nextOne = episodes[i + 1];
-  const ep = useEpisode(d, e, episodes, season, markEpisodes);
-  const mkRef = useRef<HTMLButtonElement>(null), dateRef = useRef<HTMLButtonElement>(null), box = useRef<HTMLDivElement>(null);
-  useEffect(() => { box.current?.scrollIntoView({ block: 'nearest' }); }, []);
-  // a phone's swipe: left for the next one, right for the one before; not from the screen's left edge (the window's own close
-  // swipe) nor on the rating circle (dragged round)
+  // swipe
   const sw = useRef<{ x: number; y: number } | null>(null);
   const touchStart = (t: React.TouchEvent) => {
     const p = t.touches[0];
-    sw.current = t.touches.length === 1 && p.clientX > 24 && !(t.target as Element).closest('.tc-erate') ? { x: p.clientX, y: p.clientY } : null;
+    sw.current = t.touches.length === 1 && !(t.target as Element).closest('.tc-erate') ? { x: p.clientX, y: p.clientY } : null;
   };
   const touchEnd = (t: React.TouchEvent) => {
     const s0 = sw.current; sw.current = null;
@@ -450,42 +483,96 @@ function EpisodeView({ d, episodes, at, season, where, markEpisodes, open, dir }
     if (dx < 0 && nextOne) open(nextOne.ep);
     else if (dx > 0 && prev) open(prev.ep);
   };
-  const w = e.watched, when = w?.at ? new Date(w.at) : null;
-  const seenTxt = !w ? (ep.upcoming ? airs(e.air) : 'Mark watched') : w.approx === 1 || !when ? 'Watched · add the date'
-    : `Watched ${when.getDate()} ${MON[when.getMonth()]}${when.getFullYear() === new Date().getFullYear() ? '' : ` ${when.getFullYear()}`}${(w.plays || 0) > 1 ? ` · ${w.plays}×` : ''}`;
+  return createPortal(
+    <div className="tp-scrim tep-scrim" onClick={(x) => { if (x.target === x.currentTarget) open(null); }}>
+      <aside className="tpanel tpeek tep" role="dialog" aria-modal="true" aria-label={e.name || `Episode ${e.ep}`} onTouchStart={touchStart} onTouchEnd={touchEnd}>
+        <EpisodeCard key={e.ep} d={d} e={e} episodes={episodes} season={season} where={where} markEpisodes={markEpisodes} dir={dir} open={open} />
+        <div className="tep-nav">
+          <button type="button" className={`tc-evnav${dir === 'L' ? ' lit' : ''}`} aria-label="Previous episode" disabled={!prev} onClick={() => prev && open(prev.ep)}><Circ><Icon d="M15 5l-7 7 7 7" /></Circ></button>
+          <button type="button" className={`tc-evnav${dir === 'R' ? ' lit' : ''}`} aria-label="Next episode" disabled={!nextOne} onClick={() => nextOne && open(nextOne.ep)}><Circ><Icon d="M9 5l7 7-7 7" /></Circ></button>
+        </div>
+      </aside>
+    </div>,
+    document.body,
+  );
+}
+function EpisodeCard({ d, e, episodes, season, where, markEpisodes, dir, open }: { d: Title; e: Episode; episodes: Episode[]; season: number; where: string; markEpisodes: Mark; dir: string; open: Open }) {
+  const ep = useEpisode(d, e, episodes, season, markEpisodes);
+  const { openPerson } = useTitle();
+  // cast row arrows
+  const gl = useRef<HTMLDivElement>(null), [gnav, setGnav] = useState({ more: false, start: true, end: false });
+  const gupd = () => { const x = gl.current; if (!x) return; const n = { more: x.scrollWidth > x.clientWidth + 2, start: x.scrollLeft < 4, end: x.scrollLeft + x.clientWidth >= x.scrollWidth - 4 };
+    setGnav((o) => (o.more === n.more && o.start === n.start && o.end === n.end ? o : n)); };
+  useLayoutEffect(gupd);
+  const mkRef = useRef<HTMLButtonElement>(null), dateRef = useRef<HTMLButtonElement>(null);
+  // story fit
+  const story = useRef<HTMLDivElement>(null), [full, setFull] = useState(false), [cut, setCut] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const w = story.current, p = w?.firstElementChild as HTMLElement | null;
+    if (!w || !p || p.scrollHeight <= w.clientHeight + 1) return;
+    const cs = getComputedStyle(p), lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.55;
+    setCut(Math.max(1, Math.floor(w.clientHeight / lh)) * lh);
+  }, []);
+  const w = e.watched, when = w?.at ? new Date(w.at) : null, name = e.name || `Episode ${e.ep}`;
+  const seenTxt = !w ? null : w.approx === 1 || !when ? 'Add the date'
+    : `${when.getDate()} ${MON[when.getMonth()]}${when.getFullYear() === new Date().getFullYear() ? '' : ` ${when.getFullYear()}`}${(w.plays || 0) > 1 ? ` · ${w.plays}×` : ''}`;
   return (
-    <div className="tc-epview" ref={box} onTouchStart={touchStart} onTouchEnd={touchEnd}>
-      <div className="tc-evtop">
-        <button type="button" className="tc-evnav" aria-label="Back to the episodes" onClick={() => open(null)}><Circ><Icon d="M15 5l-7 7 7 7" /></Circ></button>
-        <span className="tc-evwhere">{`${where} · E${e.ep}`}</span>
-        <div className="tc-evacts">
-          {!ep.upcoming && (
-            <div className="tc-evact">
-              <RateCircle cls="tc-erate" state={e.mine ? ' on' : ''} v={e.mine || 0} current={e.mine || 0} label={e.mine ? `Your rating ${e.mine.toFixed(1)}` : 'Drag to rate'}
-                save={(n) => rateIt(d, n, e.se ?? season, e.tep ?? e.ep)} />
+    <div className={`tep-in${dir ? ` from-${dir}` : ''}`}>
+      <div className="tpk-art">
+        {epImg(d, e) && <img className={`hero-bg on${e.still ? '' : ' fb'}`} src={(epImg(d, e)!).replace(/\/t\/p\/w\d+\//, '/t/p/w780/')} alt="" />}
+        <div className="hero-shade" />
+        <div className="tpk-head">
+          <span className="hero-kick">{`${d.title} · ${where} · E${e.ep}`}</span>
+          <h3 className="hero-title">{name}</h3>
+          <div className="tc-meta hero-meta">{[ep.upcoming ? airs(e.air) : epDay(e.air), e.runtime ? `${e.runtime}m` : null].filter(Boolean).join(' · ')}
+            {e.tvdb && <a className="tc-tvdb" href="https://thetvdb.com" target="_blank" rel="noopener noreferrer">Info from TheTVDB.com</a>}</div>
+          <div className="tc-chips tep-acts">
+            {e.score != null && (
+              <div className="tep-act" role="img" aria-label={`TMDB ${e.score} from ${e.votes} votes`}>
+                <span className="tep-score" style={{ '--fill': `${e.score * 10}%` } as CSSProperties}><img src="/icons/tmdb.svg" alt="" /></span>
+                <span className="tc-al mono">{e.score.toFixed(1)}</span>
+              </div>
+            )}
+            {!ep.upcoming && (
+              <div className="tep-act">
+                <RateCircle cls="tc-erate" state={e.mine ? ' on' : ''} v={e.mine || 0} current={e.mine || 0} label={e.mine ? `Your rating ${e.mine.toFixed(1)}` : 'Drag to rate'}
+                  save={(n) => rateIt(d, n, e.se ?? season, e.tep ?? e.ep)} />
+                <span className={`tc-al${e.mine ? ' on' : ''}`}>{e.mine ? 'Rated' : 'Rate'}</span>
+              </div>
+            )}
+            <div className="tep-act">
+              <button ref={mkRef} type="button" className={`tc-mark${w ? ' on' : ''}${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel} disabled={ep.upcoming}
+                onClick={() => ep.tick(mkRef.current)}><Circ><TickIcon armed={ep.ask.armed} upcoming={ep.upcoming} /></Circ></button>
+              {ep.ask.armed ? <span className="tc-al bad">Remove?</span>
+                : w ? <button ref={dateRef} type="button" className="tc-al on tc-evdate" aria-label={`Watched ${seenTxt}; change the date`} onClick={() => ep.redate(dateRef.current)}>{seenTxt}</button>
+                : <span className="tc-al">{ep.upcoming ? 'Not out' : 'Watch'}</span>}
             </div>
-          )}
-          <div className="tc-evact">
-            <button ref={mkRef} type="button" className={`tc-mark${w ? ' on' : ''}${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel} disabled={ep.upcoming}
-              onClick={() => ep.tick(mkRef.current)}><Circ><TickIcon armed={ep.ask.armed} upcoming={ep.upcoming} /></Circ></button>
           </div>
         </div>
-        <span className="rsep" aria-hidden="true" />
-        <button type="button" className={`tc-evnav${dir === 'L' ? ' lit' : ''}`} aria-label="Previous episode" disabled={!prev} onClick={() => prev && open(prev.ep)}><Circ><Icon d="M15 5l-7 7 7 7" /></Circ></button>
-        <button type="button" className={`tc-evnav${dir === 'R' ? ' lit' : ''}`} aria-label="Next episode" disabled={!nextOne} onClick={() => nextOne && open(nextOne.ep)}><Circ><Icon d="M9 5l7 7-7 7" /></Circ></button>
       </div>
-      <div className="tc-evbody">
-        <div className="tc-evstill">{(e.still || d.backdrop) && <img src={e.still || d.backdrop!} alt="" className={e.still ? undefined : 'fb'} />}</div>
-        <div className="tc-evtext">
-          <div className="tc-evtitle">
-            <h3 className="tc-evname">{e.name || `Episode ${e.ep}`}</h3>
-            <div className="tc-evmeta">{[ep.upcoming ? airs(e.air) : epDay(e.air), e.runtime ? `${e.runtime}m` : null].filter(Boolean).join(' · ')}</div>
-            {e.tvdb && <a className="tc-tvdb" href="https://thetvdb.com" target="_blank" rel="noopener noreferrer">Info from TheTVDB.com</a>}
-            {ep.ask.armed ? <span className="tc-evl bad">{ep.tickLabel}</span>
-              : w ? <button ref={dateRef} type="button" className="tc-evl tc-evdate" onClick={() => ep.redate(dateRef.current)}>{seenTxt}</button> : null}
+      <div className={`tpk-body tep-body${full ? ' full' : ''}`}>
+        {e.overview && <div ref={story} className="tep-story" style={!full && cut ? { maxHeight: cut } : undefined}>
+          <p className="hero-story">{e.overview}</p>
+          {!full && cut != null && <button type="button" className="tep-more" onClick={() => setFull(true)}>See more</button>}
+        </div>}
+        {(!!e.directors?.length || !!e.writers?.length) && <p className="tep-credits">
+          {!!e.directors?.length && <span><i>Directed by</i> {e.directors.join(', ')}</span>}
+          {!!e.writers?.length && <span><i>Written by</i> {e.writers.join(', ')}</span>}
+        </p>}
+        {!!e.guests?.length && <div className="tep-guests">
+          <div className="tep-ghead"><span className="tep-gh">Cast</span>
+            {gnav.more && <div className="rail-nav">
+              <button type="button" className="rbtn rarrow" aria-label="Previous" disabled={gnav.start} onClick={() => gl.current?.scrollBy({ left: -gl.current.clientWidth * 0.8, behavior: 'smooth' })}><Icon d="M15 6l-6 6 6 6" size={16} width={2.2} /></button>
+              <button type="button" className="rbtn rarrow" aria-label="Next" disabled={gnav.end} onClick={() => gl.current?.scrollBy({ left: gl.current.clientWidth * 0.8, behavior: 'smooth' })}><Icon d="M9 6l6 6-6 6" size={16} width={2.2} /></button>
+            </div>}
           </div>
-          {e.overview && <p className="tc-evov">{e.overview}</p>}
-        </div>
+          <div className="tep-glist" ref={gl} onScroll={gupd}>{e.guests.map((g) => (
+            <button key={g.id} type="button" className="tep-g" onClick={() => { open(null); openPerson({ id: g.id, name: g.name }); }} aria-label={`${g.name}${g.role ? ` as ${g.role}` : ''}`}>
+              <span className="tep-gp">{g.photo ? <img src={g.photo} alt="" loading="lazy" /> : <b>{g.name.split(' ').map((w) => w[0]).slice(0, 2).join('')}</b>}</span>
+              <span className="tep-gn">{g.name}</span>{g.role && <span className="tep-gr">{g.role}</span>}
+            </button>
+          ))}</div>
+        </div>}
       </div>
     </div>
   );

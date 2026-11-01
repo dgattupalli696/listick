@@ -10,7 +10,7 @@ import type { Card, ForYou, MalAnime, TmdbCollection, TmdbPage } from './types';
 import { HOUR, env, present } from './util';
 
 // ---------- for you: rows built from what you watched (IMDb ids from Stremio's history, MAL ids of the anime you played) ----------
-// Because you watched (TMDB recommendations of the 2 most recent watches), Coming soon (next episodes and premieres of
+// Because you watched (TMDB recommendations of your last few movies and shows, MyAnimeList's of your last anime), Coming soon (next episodes and premieres of
 // shows you watched or saved, watchlist films not out yet) and Next in the series (the next film of a collection).
 // Kept 6 h per set of watches; watchlist flags are fresh on every answer.
 type Suggestion = { key: string; note?: string | null; date?: string | null; what?: string | null };
@@ -51,7 +51,6 @@ async function buildForYou(uid: string, imdbs: string[], mals: number[]): Promis
   const fmt = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   const played = async (keys: string[]) => new Set((await q.all<{ key: string }>('select distinct key from history where user_id = ? and key = any(?)', uid, keys)).map((r) => r.key));
 
-  // recommendations from the last movie and the last show watched (TMDB), and the last anime (MyAnimeList)
   const recs: ForYouParts['recs'] = { movie: [], tv: [], anime: [] };
   // from your last few movies and shows (up to 3 each) until there are 10 unwatched picks of each kind
   for (const type of ['movie', 'tv'] as const) {

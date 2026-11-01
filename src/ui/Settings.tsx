@@ -1,6 +1,5 @@
 'use client';
-// The Settings page (/settings): your name and the list of sections, the picked one in a glass panel beside it (on a phone the
-// sections are a row of chips above it). Account: username (signs you in), name (the greeting), email and password, each
+// The Settings page (/settings): your name and the list of sections, the picked one in a glass panel beside it. Account: username (signs you in), name (the greeting), email and password, each
 // changed in place from its pencil circle, and signing out. Appearance: this device's look. Region & services: your country
 // and the services you pay for there (smart lists start with them). Connections: Stremio tracks what you
 // watch, and so do Jellyfin and Seanime (Plex, Emby and Kodi to come); AniList and MyAnimeList get your anime progress on

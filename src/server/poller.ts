@@ -1,4 +1,4 @@
-// Who the worker's live job refreshes, and when, so it keeps up with many users: everyone (Up next comes from the History); users active
+// Who the worker's live job refreshes, and when: everyone; users active
 // in the last 30 days every round (15 s), the rest every 30 minutes (Stremio's watched record still
 // shows what they watched in between, with coarser times). A user whose refresh fails waits longer each time (30 s, 1 min,
 // 2 min, … up to 30 minutes). Several users run at once, up to a cap, so one slow source doesn't hold the others up.

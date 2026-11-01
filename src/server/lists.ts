@@ -239,11 +239,14 @@ async function keysOf(l: Row) {
   if (l.kind === 'smart') return l.items || [];
   return (await q.all<{ key: string }>('select key from list_items where list_id = ? order by added_at desc', l.id)).map((r) => r.key);
 }
-// a list as its row: the first five posters (its stack), the count
+// list card
 async function cardOf(l: Row & { owner?: string }) {
-  const keys = await keysOf(l), ts = await titlesOf(keys.slice(0, 5));
+  const keys = await keysOf(l);
+  const [ts, changed] = await Promise.all([titlesOf(keys.slice(0, 8)),
+    l.kind === 'smart' ? l.refreshed_at : q.one<{ at: number | null }>('select max(added_at) at from list_items where list_id = ?', l.id).then((r) => r?.at ?? null)]);
   return { id: l.id, name: l.name, description: l.description, kind: l.kind, media: l.media, filters: l.filters, shared: l.shared,
-    owner: l.owner ?? null, count: keys.length, refreshedAt: l.refreshed_at, posters: keys.slice(0, 5).map((k) => ts.get(k)?.poster).filter(present) };
+    owner: l.owner ?? null, count: keys.length, refreshedAt: l.refreshed_at, posters: keys.slice(0, 5).map((k) => ts.get(k)?.poster).filter(present),
+    backdrop: keys.slice(0, 8).map((k) => ts.get(k)?.backdrop).find(present) ?? null, changedAt: changed || l.created_at, onHome: !!l.filters?.row };
 }
 // others' lists shared on this Listick: those you follow, and the rest; each with its owner's name
 const OTHERS = `select l.*, coalesce(nullif(u.name, ''), u.username) owner from lists l join "user" u on u.id = l.user_id where l.shared and l.user_id != ?`;
@@ -275,19 +278,32 @@ export async function copyList(uid: string, id: string) {
 export async function listsOf(uid: string) {
   const rows = await q.all<Row>('select * from lists where user_id = ? order by position, created_at', uid);
   const posters = async (sql: string) => (await q.all<{ poster: string }>(sql, uid)).map((r) => r.poster);
-  // split as Home's rows: anime films with movies, the rest with shows
-  const plan = await q.one<{ n: number; movie: number; tv: number }>(`select count(*)::int n, count(*) filter (where t.type = 'movie')::int movie,
-    count(*) filter (where t.type != 'movie')::int tv from watchlist w join titles t using (key) where w.user_id = ?`, uid);
-  const watched = await q.one<{ n: number }>('select count(distinct key)::int n from history where user_id = ?', uid);
-  const rated = await q.one<{ n: number; avg: number | null }>('select count(distinct key)::int n, round(avg(rating)::numeric, 1)::float avg from ratings where user_id = ? and season < 0', uid);
+  const backdrop = async (sql: string) => (await q.one<{ backdrop: string }>(sql, uid))?.backdrop ?? null;
+  const [plan, watched, rated, plays, lists, others, planP, planB, watchedB, watchedP, ratedB, ratedP] = await Promise.all([
+    // split as Home's rows: anime films with movies, the rest with shows
+    q.one<{ n: number; movie: number; tv: number }>(`select count(*)::int n, count(*) filter (where t.type = 'movie')::int movie,
+      count(*) filter (where t.type != 'movie')::int tv from watchlist w join titles t using (key) where w.user_id = ?`, uid),
+    q.one<{ n: number }>('select count(distinct key)::int n from history where user_id = ?', uid),
+    q.one<{ n: number; avg: number | null }>('select count(distinct key)::int n, round(avg(rating)::numeric, 1)::float avg from ratings where user_id = ? and season < 0', uid),
+    q.one<{ n: number }>('select count(*)::int n from history where user_id = ? and watched_at >= ?', uid, Date.now() - 30 * 24 * 3600000),
+    Promise.all(rows.map((l) => cardOf(l))), othersOf(uid),
+    posters('select t.poster from watchlist w join titles t using (key) where w.user_id = ? and t.poster is not null order by w.added_at desc limit 5'),
+    backdrop('select t.backdrop from watchlist w join titles t using (key) where w.user_id = ? and t.backdrop is not null order by w.added_at desc limit 1'),
+    backdrop(`select t.backdrop from (select key, max(watched_at) at from history where user_id = ? group by key) h join titles t using (key)
+      where t.backdrop is not null order by h.at desc limit 1`),
+    posters(`select t.poster from (select key, max(watched_at) at from history where user_id = ? group by key) h join titles t using (key)
+      where t.poster is not null order by h.at desc limit 5`),
+    backdrop(`select t.backdrop from (select key, max(rating) r, max(rated_at) at from ratings where user_id = ? and season < 0 group by key) r join titles t using (key)
+      where t.backdrop is not null order by r.r desc, r.at desc limit 1`),
+    posters(`select t.poster from (select key, max(rated_at) at from ratings where user_id = ? and season < 0 group by key) r join titles t using (key)
+      where t.poster is not null order by r.at desc limit 5`),
+  ]);
   return {
-    lists: await Promise.all(rows.map((l) => cardOf(l))), ...await othersOf(uid),
+    lists, ...others,
     builtin: {
-      plan: { ...plan, posters: await posters('select t.poster from watchlist w join titles t using (key) where w.user_id = ? and t.poster is not null order by w.added_at desc limit 5') },
-      watched: { n: watched!.n, posters: await posters(`select t.poster from (select key, max(watched_at) at from history where user_id = ? group by key) h join titles t using (key)
-        where t.poster is not null order by h.at desc limit 5`) },
-      rated: { ...rated, posters: await posters(`select t.poster from (select key, max(rated_at) at from ratings where user_id = ? and season < 0 group by key) r join titles t using (key)
-        where t.poster is not null order by r.at desc limit 5`) },
+      plan: { ...plan!, posters: planP, backdrop: planB },
+      watched: { n: watched!.n, plays: plays!.n, backdrop: watchedB, posters: watchedP },
+      rated: { ...rated!, backdrop: ratedB, posters: ratedP },
     },
     genres: GENRES,
   };

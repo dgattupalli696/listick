@@ -1,5 +1,5 @@
 'use client';
-// A sheet (Appearance, Account): a popover beside the button that opened it on tablet and desktop, a bottom sheet on the phone.
+// A sheet (Appearance, Add to list, a list's name): a popover beside the button that opened it on tablet and desktop, a bottom sheet on the phone.
 // From the side rail it sits beside the rail with its foot level with the button (and stays there as it grows); from the top
 // bar or a poster, just under the button (above it when there's no room below).
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
@@ -20,7 +20,7 @@ function place(p: HTMLElement, from: HTMLElement | null) {
 export function Sheet({ id, title, open, from, onClose, onBackdrop, children }: { id: string; title: string; open: boolean; from: HTMLElement | null;
   onClose: () => void; onBackdrop?: (e: React.MouseEvent) => void; children: ReactNode }) {
   const panel = useRef<HTMLDivElement>(null), close = useRef<HTMLButtonElement>(null);
-  // placed on every render and whenever its size changes (rows open, the Account pane's data comes in), focus on the × when it opens
+  // placed on every render and whenever its size changes (rows open), focus on the × when it opens
   useLayoutEffect(() => { if (open && panel.current) place(panel.current, from); });
   useEffect(() => {
     const p = panel.current; if (!open || !p) return;

@@ -75,7 +75,7 @@ async function build(uid: string): Promise<Follow> {
     select distinct on (h.key) h.key, h.season, h.episode, r.last, l.ls, l.le, t.type, t.title, t.poster, t.backdrop, t.anime
     from history h join recent r on r.key = h.key join latest l on l.key = h.key join titles t on t.key = h.key
     where h.user_id = ? and h.season > 0 order by h.key, h.season desc, h.episode desc`, uid, since, uid, uid)).sort((a, b) => b.last - a.last).slice(0, 30);
-  const from = day(new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()), to = day(new Date(new Date().getFullYear(), new Date().getMonth() + 2, 0).getTime());
+  const from = day(new Date(new Date().getFullYear(), new Date().getMonth(), 1 - 7).getTime()), to = day(new Date(new Date().getFullYear(), new Date().getMonth() + 2, 0).getTime());
   const upNext: UpNext[] = [], schedule: AirEp[] = [];
   for (const f of followed) {
     await safe(async () => {
@@ -88,7 +88,7 @@ async function build(uid: string): Promise<Follow> {
         const r = await nextOf(f.key, f.ls, f.le);
         if (r && isOut(r)) upNext.push({ key: f.key, type: f.type, title: f.title, poster: f.poster, backdrop: f.backdrop, se: r.se, ep: r.e.ep, at: f.last, airedAt: at(r.se, r.e), rewatch: true });
       }
-      // the calendar: this season's and the next one's episodes airing this month or next, each marked if you watched it
+      // calendar
       const seasons = [f.season, ...(n && n.se !== f.season ? [n.se] : [])];
       const seen = new Set((await q.all<{ season: number; episode: number }>('select distinct season, episode from history where user_id = ? and key = ?', uid, f.key)).map((r) => `${r.season}:${r.episode}`));
       for (const se of seasons)

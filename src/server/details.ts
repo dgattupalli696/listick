@@ -5,10 +5,10 @@ import { fribb, fromMal, loadFribb } from './mapping';
 import { langOf, namesOf, posterAt } from './names';
 import { TMDB_IMG, getJSON, kitsu, mal, tmdb } from './sources';
 import { watchKeys } from './store';
-import { cleanSynopsis, fillFromTmdb, fromKitsu, fromTmdb, getTitle, saveTitles } from './titles';
-import { fillFromTvdb, tvdbSplit, tvdbSplitKnown } from './tvdb';
+import { cleanSynopsis, fillFromTmdb, fromKitsu, fromTmdb, getTitle, kitsuImg, saveTitles } from './titles';
+import { cjk, fillFromTvdb, tvdbSplit, tvdbSplitKnown } from './tvdb';
 import { watchingOf } from './watching';
-import type { Detail, Episode, KitsuList, KitsuOne, MalAnime, Omdb, Title, TmdbCollection, TmdbDetails, TmdbSeasonDetails, Uid } from './types';
+import type { Detail, Episode, KitsuList, KitsuOne, MalAnime, Omdb, Title, TmdbCollection, TmdbDetails, TmdbItem, TmdbSeasonDetails, Uid } from './types';
 import { HOUR, env } from './util';
 
 const REGION = 'FI';
@@ -35,7 +35,7 @@ async function activity(key: string, uid: Uid) {
   };
 }
 // an anime's card is made again once when its parts change (ANIME_V), not left for the 6 h
-const ANIME_V = 2;
+const ANIME_V = 5;
 const isAnime = (v: Detail) => v.anime || v.type === 'anime';
 async function cachedDetail(key: string) {
   const c = await q.one<{ at: number; value: Detail }>('select at, value from detail_cache where key = ?', key);
@@ -102,8 +102,12 @@ export async function season(key: string, n: number, uid: Uid, tvdbOrder = false
     let eps: Episode[] = [];
     if (src === 'tmdb') {
       const d = await tmdb<TmdbSeasonDetails>(`/tv/${id}/season/${n}`);
+      const job = (e: NonNullable<TmdbSeasonDetails['episodes']>[number], jobs: string[]) => [...new Set((e.crew || []).filter((c) => jobs.includes(c.job)).map((c) => c.name))];
       eps = (d.episodes || []).map((e) => ({ ep: e.episode_number, name: e.name || null, air: e.air_date || null, runtime: e.runtime || null,
-        still: e.still_path ? `${TMDB_IMG}w300${e.still_path}` : null, overview: e.overview || null }));
+        still: e.still_path ? `${TMDB_IMG}w300${e.still_path}` : null, overview: e.overview || null,
+        score: e.vote_count && e.vote_count >= 5 && e.vote_average ? Math.round(e.vote_average * 10) / 10 : null, votes: e.vote_count || 0,
+        directors: job(e, ['Director']), writers: job(e, ['Writer', 'Teleplay', 'Story', 'Screenplay']),
+        guests: (e.guest_stars || []).slice(0, 12).map((g) => ({ id: g.id, name: g.name, role: g.character || null, photo: g.profile_path ? `${TMDB_IMG}w185${g.profile_path}` : null })) }));
       eps = await fillFromTvdb(id, n, eps).catch(() => eps);
     } else {
       const page = (off: number) => kitsu<KitsuList>(`/anime/${id}/episodes?sort=number&page[limit]=20&page[offset]=${off}`);
@@ -111,7 +115,7 @@ export async function season(key: string, n: number, uid: Uid, tvdbOrder = false
       for (let off = 20; off < count; off += 20) rest.push(off);
       const pages = [first];
       for (let i = 0; i < rest.length; i += 10) pages.push(...await Promise.all(rest.slice(i, i + 10).map(page)));   // ten at a time
-      for (const d of pages) eps.push(...(d.data || []).map((x) => { const a = x.attributes; return { ep: a.number!, name: a.titles?.en_us || a.titles?.en || a.canonicalTitle || null,
+      for (const d of pages) eps.push(...(d.data || []).map((x) => { const a = x.attributes; return { ep: a.number!, name: a.titles?.en_us || a.titles?.en || a.titles?.en_jp || [a.canonicalTitle].find((x) => x && !cjk(x)) || null,
         air: a.airdate || null, runtime: a.length || null, still: a.thumbnail?.original || null, overview: cleanSynopsis(a.synopsis) }; }));
     }
     c = { at: Date.now(), value: eps.filter((e) => e.ep != null) };
@@ -127,14 +131,14 @@ export async function season(key: string, n: number, uid: Uid, tvdbOrder = false
 }
 async function tmdbDetails(type: 'movie' | 'tv', id: string): Promise<Detail> {
   const extra = type === 'movie' ? ',release_dates,videos,recommendations' : ',content_ratings,videos,recommendations';
-  const d = await tmdb<TmdbDetails>(`/${type}/${id}?append_to_response=credits,watch/providers,external_ids${extra}`);
+  const d = await tmdb<TmdbDetails>(`/${type}/${id}?append_to_response=credits,watch/providers,external_ids${extra}${type === 'tv' ? ',images&include_image_language=null' : ''}`);
   const [t] = await saveTitles([fromTmdb(type)(d)]);
   const fi = d['watch/providers']?.results?.[REGION] || {};
   const prov = (list: { provider_name: string; logo_path?: string | null }[] | undefined) => (list || []).map((p) => ({ name: p.provider_name, logo: p.logo_path ? `${TMDB_IMG}w92${p.logo_path}` : null }));
   const crew = (job: string) => (d.credits?.crew || []).filter((c) => c.job === job).map((c) => c.name);
   return {
-    // the card shows the poster ~240 px wide (480 px on a sharp screen): the 780 px image, not the rows' 342 px one
     ...pick(t), poster: d.poster_path ? `${TMDB_IMG}w780${d.poster_path}` : t.poster, backdrop: d.backdrop_path ? `${TMDB_IMG}w1280${d.backdrop_path}` : t.backdrop,
+    backdrops: (d.images?.backdrops || []).slice(0, 20).map((b) => `${TMDB_IMG}w780${b.file_path}`),
     genres: (d.genres || []).map((g) => g.name), runtime: d.runtime || d.episode_run_time?.[0] || null,
     released: d.release_date || d.first_air_date || null, status: d.status || null, tagline: d.tagline || null,
     // specials (season 0) last
@@ -142,7 +146,7 @@ async function tmdbDetails(type: 'movie' | 'tv', id: string): Promise<Detail> {
       .map((s) => ({ n: s.season_number, name: s.season_number ? s.name || '' : 'Specials', episodes: s.episode_count, year: Number((s.air_date || '').slice(0, 4)) || null })) : null,
     next: d.next_episode_to_air ? { season: d.next_episode_to_air.season_number, ep: d.next_episode_to_air.episode_number, date: d.next_episode_to_air.air_date ?? null } : null,
     people: type === 'movie' ? { label: 'Director', names: crew('Director') } : { label: 'Created by', names: (d.created_by || []).map((c) => c.name) },
-    cast: (d.credits?.cast || []).slice(0, 10).map((c) => ({ name: c.name, role: c.character || null, photo: c.profile_path ? `${TMDB_IMG}w185${c.profile_path}` : null })),
+    cast: (d.credits?.cast || []).slice(0, 10).map((c) => ({ name: c.name, role: c.character || null, photo: c.profile_path ? `${TMDB_IMG}w185${c.profile_path}` : null, id: c.id || null })),
     providers: { stream: prov(fi.flatrate), free: prov([...(fi.free || []), ...(fi.ads || [])]), rent: prov(fi.rent), buy: prov(fi.buy) },
     imdb: d.external_ids?.imdb_id || d.imdb_id || null, tvdb: d.external_ids?.tvdb_id || null,
     scores: await omdbFor(d.external_ids?.imdb_id || d.imdb_id),
@@ -205,7 +209,7 @@ async function tvExtras(d: TmdbDetails) {
   return { certification: cert('US') || cert('GB'), trailer: trailerOf(d), similarKeys };
 }
 // an anime show's card also gets its first season's Kitsu score, and MyAnimeList's score and rank (of its first season's
-// entry, via Fribb) and MAL's recommendations as Similar, which fit anime better than TMDB's
+// entry, via Fribb) and MAL's recommendations as Similar
 const kitsuScore = (a: { averageRating?: string | null; slug?: string } | undefined) =>
   (a?.averageRating ? { score: Math.round(Number(a.averageRating)) / 10, url: `https://kitsu.app/anime/${a.slug}` } : null);
 // an anime film's Kitsu score: its Kitsu entry through Fribb
@@ -248,7 +252,7 @@ async function movieExtras(d: TmdbDetails) {
   };
 }
 // an anime's card: Kitsu's entry (genres, other sites' ids, studios) and characters at once, then MyAnimeList's score, rank, age
-// rating, studios, source and recommendations (Similar), so it has what a show's card has
+// rating, studios, source and recommendations (Similar)
 const MAL_RATING: Record<string, string> = { g: 'G', pg: 'PG', pg_13: 'PG-13', r: 'R-17+', 'r+': 'R+', rx: 'Rx' };
 async function kitsuDetails(id: string): Promise<Detail> {
   const [d, ch] = await Promise.all([
@@ -267,11 +271,11 @@ async function kitsuDetails(id: string): Promise<Detail> {
   const who = (cid: string | undefined) => (ch?.included || []).find((x) => x.type === 'characters' && x.id === cid)?.attributes;
   const cast = (ch?.data || []).map((x) => ({ role: x.attributes.role, c: who(x.relationships?.character?.data?.id) })).filter((x) => x.c)
     .sort((p, r) => (p.role === 'main' ? 0 : 1) - (r.role === 'main' ? 0 : 1))
-    .slice(0, 12).map((x) => ({ name: x.c!.canonicalName || x.c!.names?.en, role: x.role === 'main' ? 'Main' : 'Supporting', photo: x.c!.image?.original || null }));
+    .slice(0, 12).map((x) => ({ name: x.c!.canonicalName || x.c!.names?.en, role: x.role === 'main' ? 'Main' : 'Supporting', photo: kitsuImg(x.c!.image?.original) }));
   const mean = m?.mean || (stored?.rating_src === 'mal' ? stored.rating : null);
   return {
-    ...pick({ ...t, poster: a.posterImage?.large || a.posterImage?.original || t.poster || stored?.poster || null, ...(mean ? { rating: mean, rating_src: 'mal' } : {}) }),
-    ratingSrc: mean ? 'mal' : t.rating_src, backdrop: a.coverImage?.original || t.backdrop, overview: cleanSynopsis(a.synopsis),
+    ...pick({ ...t, poster: kitsuImg(a.posterImage?.original) || kitsuImg(a.posterImage?.large) || t.poster || stored?.poster || null, ...(mean ? { rating: mean, rating_src: 'mal' } : {}) }),
+    ratingSrc: mean ? 'mal' : t.rating_src, backdrop: kitsuImg(a.coverImage?.original) || t.backdrop, overview: cleanSynopsis(a.synopsis),
     genres: inc.filter((x) => x.type === 'categories').map((g) => g.attributes.title!).slice(0, 6),
     runtime: a.episodeLength || null, released: a.startDate || null, status: a.status || null, tagline: null,
     episodes: a.episodeCount || null, format: a.subtype || null,
@@ -286,3 +290,44 @@ async function kitsuDetails(id: string): Promise<Detail> {
 }
 const pick = (t: Title) => ({ key: t.key, type: t.type, title: t.title, label: t.label, year: t.year, poster: t.poster, backdrop: t.backdrop,
   rating: t.rating, ratingSrc: t.rating_src || null, overview: t.overview, url: t.url });
+
+// ---------- a person ----------
+type Credit = TmdbItem & { media_type?: string; character?: string; job?: string; department?: string; vote_count?: number; episode_count?: number };
+type TmdbPerson = { id: number; name: string; known_for_department?: string; birthday?: string | null; deathday?: string | null; place_of_birth?: string | null;
+  biography?: string; profile_path?: string | null; combined_credits?: { cast?: Credit[]; crew?: Credit[] }; external_ids?: { imdb_id?: string | null; instagram_id?: string | null } };
+const people = new Map<string, { at: number; value: Awaited<ReturnType<typeof personFrom>> }>();
+// not acting roles
+const appearance = (c: Credit) => /^(self|himself|herself|themselves)\b/i.test(c.character || '') || (c.genre_ids || []).some((g) => g === 10767 || g === 10763);
+const dated = (c: Credit) => c.release_date || c.first_air_date || '';
+const CREW_ROW: Record<string, string> = { Directing: 'Directed', Writing: 'Written', Production: 'Produced', Creator: 'Created', Sound: 'Music', Camera: 'Filmed' };
+async function personFrom(p: TmdbPerson) {
+  const typed = (c: Credit) => (c.media_type === 'movie' || c.media_type === 'tv') && !!c.poster_path;
+  const cast = (p.combined_credits?.cast || []).filter((c) => typed(c) && !appearance(c));
+  const dept = p.known_for_department || 'Acting', crew = dept === 'Acting' ? [] : (p.combined_credits?.crew || []).filter((c) => typed(c) && c.department === dept);
+  const keysOf = async (list: Credit[]) => {
+    const seen = new Set<string>(), uniq = list.filter((c) => { const k = `${c.media_type}:${c.id}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    return (await saveTitles(uniq.map((c) => fromTmdb(c.media_type as 'movie' | 'tv')(c)))).map((t) => t.key);
+  };
+  const byVotes = (a: Credit, b: Credit) => (b.vote_count || 0) - (a.vote_count || 0), byDate = (a: Credit, b: Credit) => dated(b).localeCompare(dated(a));
+  return {
+    id: p.id, name: p.name, dept, birthday: p.birthday || null, deathday: p.deathday || null, place: p.place_of_birth || null, bio: p.biography?.trim() || null,
+    photo: p.profile_path ? `${TMDB_IMG}h632${p.profile_path}` : null,
+    imdb: p.external_ids?.imdb_id || null, instagram: p.external_ids?.instagram_id || null,
+    knownFor: await keysOf([...(dept === 'Acting' ? cast : crew)].sort(byVotes).slice(0, 14)),
+    acting: await keysOf([...cast].sort(byDate).slice(0, 80)),
+    crew: crew.length ? { label: CREW_ROW[dept] || dept, keys: await keysOf([...crew].sort(byDate).slice(0, 80)) } : null,
+  };
+}
+export async function person(uid: Uid, ref: { id?: number; name?: string }) {
+  let id = ref.id;
+  if (!id && ref.name) id = (await tmdb<{ results?: { id: number }[] }>(`/search/person?query=${encodeURIComponent(ref.name)}`)).results?.[0]?.id;
+  if (!id) return null;
+  let c = people.get(String(id));
+  if (!c || Date.now() - c.at > 6 * HOUR) {
+    c = { at: Date.now(), value: await personFrom(await tmdb<TmdbPerson>(`/person/${id}?append_to_response=combined_credits,external_ids`)) };
+    people.set(String(id), c);
+    if (people.size > 300) people.delete(people.keys().next().value!);
+  }
+  const v = c.value, wl = await watchKeys(uid);
+  return { ...v, knownFor: await cardsOf(uid, v.knownFor, wl), acting: await cardsOf(uid, v.acting, wl), crew: v.crew ? { label: v.crew.label, items: await cardsOf(uid, v.crew.keys, wl) } : null };
+}

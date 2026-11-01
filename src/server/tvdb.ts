@@ -30,7 +30,8 @@ async function tvdbSeason(id: number, season: number) {
   if (c && Date.now() - c.at < 6 * HOUR) return c.list;
   const list: TvdbEpisode[] = [];
   for (let page = 0; page < 10; page++) {
-    const r = await tvdb<TvdbPage>(`/series/${id}/episodes/default?page=${page}&season=${season}`);
+    // English
+    const r = await tvdb<TvdbPage>(`/series/${id}/episodes/default/eng?page=${page}&season=${season}`);
     list.push(...(r.data?.episodes || []).filter((e) => e.seasonNumber === season));
     if (!r.links?.next) break;
   }
@@ -39,6 +40,8 @@ async function tvdbSeason(id: number, season: number) {
 }
 const generic = (n: string | null | undefined) => !n || /^(episode|episodio|épisode|folge|aflevering)\s*#?\d+$/i.test(n.trim()) || /^\d+$/.test(n.trim());
 const dated = (n: string | null | undefined) => !!n && /^\d{1,4}[./-]\d{1,2}[./-]\d{1,4}$/.test(n.trim());
+// CJK script
+export const cjk = (s: string | null | undefined) => !!s && /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uff66-\uff9f]/.test(s);
 
 // a season's episodes with their gaps filled: matched by number when both list the same count, else by air date
 export async function fillFromTvdb(tmdbId: string, season: number, eps: Episode[]) {
@@ -51,9 +54,10 @@ export async function fillFromTvdb(tmdbId: string, season: number, eps: Episode[
     const t = byNumber ? list.find((x) => x.number === e.ep) : e.air ? list.find((x) => x.aired === e.air) : undefined;
     if (!t) return e;
     const f = { ...e };
-    if (generic(f.name) && !generic(t.name) && !dated(t.name)) f.name = t.name!;
-    if (!f.overview && t.overview) f.overview = t.overview;
-    if (!f.still && t.image) f.still = t.image;
+    if (generic(f.name) && !generic(t.name) && !dated(t.name) && !cjk(t.name)) f.name = t.name!;
+    if (!f.overview && t.overview && !cjk(t.overview)) f.overview = t.overview;
+    // relative image paths
+    if (!f.still && t.image) f.still = t.image.startsWith('/') ? `https://artworks.thetvdb.com${t.image}` : t.image;
     if (f.name !== e.name || f.overview !== e.overview || f.still !== e.still) f.tvdb = true;
     return f;
   });

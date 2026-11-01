@@ -49,6 +49,18 @@ async function recent(uid: string, days = 30) {
   }
   return [...out.values()].slice(0, 40);
 }
+// History page
+export async function historyPage(uid: string, before: number, beforeId: number, limit = 80) {
+  type R = { id: number; key: string; season: number; episode: number; at: number; approx: number; source: string; title: string; label: string | null; type: TitleType; anime: number | null;
+    poster: string | null; backdrop: string | null };
+  const rows = await q.all<R>(`select h.id, h.key, h.season, h.episode, h.watched_at at, h.approx, h.source, t.title, t.label, t.type, t.anime, t.poster, t.backdrop
+    from history h join titles t using (key) where h.user_id = ? and (h.watched_at < ? or (h.watched_at = ? and h.id < ?)) and h.watched_at >= ?
+    order by h.watched_at desc, h.id desc limit ?`, uid, before, before, beforeId, Date.now() - 30 * 86400000, limit);
+  const keys = [...new Set(rows.map((r) => r.key))];
+  const mine = new Map(keys.length ? (await q.all<{ key: string; season: number; episode: number; rating: number }>(
+    `select key, season, episode, rating from ratings where user_id = ? and key in (${keys.map(() => '?').join(', ')})`, uid, ...keys)).map((r) => [`${r.key}|${r.season}|${r.episode}`, r.rating]) : []);
+  return { plays: rows.map((r) => ({ ...r, anime: !!r.anime, mine: mine.get(`${r.key}|${r.season}|${r.episode}`) || null })), more: rows.length === limit };
+}
 // Continue watching cards you marked watched here stay away until Stremio has newer progress for them (Stremio itself
 // still lists them)
 async function hideDone(uid: string, sr: LiveValue['stremio']) {
@@ -121,8 +133,6 @@ async function summary(uid: string, query = new URLSearchParams()) {
       kinds: (['movie', 'tv', 'anime', 'anime-movie'] as const).filter((k) => hasKind(services, sv.id, k)) })),
     ...await shelves(uid, { group: query.get('group') || 'everyone', gkind: query.get('gkind'), svc: query.get('svc') || '', skind: query.get('skind') }, wl) };
 }
-// a row in full for the page's See all (the page itself gets each row's first `page` titles), with each title's genres and the
-// genres the row has, in the catalogs' order
 // the Movies, TV and Anime pages' carousel: that kind's trending titles that have a wide image, with their story and genres
 // (Animation says nothing on Anime)
 const HERO_ROW: Record<TitleType, string> = { movie: 'movie-trending', tv: 'tv-trending', anime: 'anime-trending' };
@@ -131,6 +141,8 @@ export async function hero(kind: TitleType, uid: Uid) {
   const list = keys.map((k) => ts.get(k)).filter((t): t is Title => !!t?.backdrop).slice(0, 8);
   return { items: (await viewsOf(uid, list, wl)).map((v, i) => ({ ...v, overview: list[i].overview, genres: genresOf(list[i]).filter((g) => kind !== 'anime' || g !== 'Animation').slice(0, 3) })) };
 }
+// a row in full for the page's See all (the page itself gets each row's first `page` titles), with each title's genres and the
+// genres the row has, in the catalogs' order
 // also a streaming service's row (svc_<service>_<row>) and For you's two (foryou-suggested, foryou-coming), each as its own page
 export async function rowAll(id: string, uid: Uid) {
   if (id === 'foryou-suggested' || id === 'foryou-coming') {
@@ -148,8 +160,8 @@ export async function rowAll(id: string, uid: Uid) {
   return { id, title: r.title, items, genres: GENRE_OPTIONS[rowType(sm ? sm[2] : id)].filter((g) => have.has(g)) };
 }
 
-// the signed-out page's poster strip: trending movies, shows and anime in turn, 8 of each, picked once a week (meta 'landing')
-// so every visit isn't a new pick; TMDB posters at w185, plenty for the strip's 93 px even on a sharp screen
+// the signed-out page's poster strip: trending movies, shows and anime in turn, 8 of each, picked once a week (meta 'landing');
+// TMDB posters at w185
 export async function landingPosters() {
   const kept = await metaGet<{ at: number; posters: string[] }>('landing');
   if (kept?.posters?.length && Date.now() - kept.at < 7 * 24 * HOUR) return kept.posters;

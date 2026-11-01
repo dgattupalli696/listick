@@ -16,9 +16,8 @@ import { HOUR } from './util';
 // watch), upnext (shows watched in the last `days` days whose next episode is out), foryou.suggested / foryou.coming,
 // row.<row id>, and svc.<row id> (the streaming services' rows: the filter picks the service, none means all of them).
 // Stremio wants one type per catalog: movie, series or anime (anime films and shows together, kept out of the other two),
-// so a list is offered once per type it can hold, and filters by genre. Your own lists and For you are the exception: one
-// mixed catalog per list under their own type ("For You", a Discover category of its own) whose filter picks movies, shows
-// or anime
+// so each row is offered under its own type. Plan to watch, Up next, your own lists and For you are one mixed catalog each
+// under their own type ("For You", a Discover category of its own) whose filter picks movies, shows or anime
 const stremioType = (t: Title) => (t.anime === 1 || t.type === 'anime' ? 'anime' : t.type === 'movie' ? 'movie' : 'series');
 // what Stremio opens an item as: a film or a show (an anime film in a movie row is a Kitsu entry, which reads as a show)
 const itemKind = (t: Title, src: string) => ((/^row\.anime-movie/.test(src) || t.type === 'movie') ? 'movie' : 'series');

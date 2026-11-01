@@ -8,7 +8,7 @@ import { HOUR, msg } from './util';
 const malKitsu = new Map<number, KitsuResource | null>();   // MAL id -> Kitsu entry, for the life of the process
 export async function fromMal(nodes: { node: MalNode }[]) {
   const out: KitsuTitle[] = [];
-  // the Kitsu entries not looked up yet, all at once (one by one, a row took seconds)
+  // the Kitsu entries not looked up yet, 10 at a time
   const todo = nodes.filter(({ node: n }) => !malKitsu.has(n.id));
   for (let i = 0; i < todo.length; i += 10) await Promise.all(todo.slice(i, i + 10).map(async ({ node: n }) => {
     const d = await kitsu<KitsuList>(`/mappings?filter[externalSite]=myanimelist/anime&filter[externalId]=${n.id}&include=item`).catch(() => undefined);
@@ -71,13 +71,13 @@ export async function loadFribb() {
   if (Date.now() - fribb.at <= 24 * HOUR) return;
   fribbLoading ||= (async () => {
     try {
-      // and back: IMDb id -> its Kitsu entries, one per TheTVDB season; TMDB show -> its entries (for MyAnimeList's score)
+      // and back: IMDb id -> its Kitsu entries, one per TheTVDB season; TMDB show -> its entries
       const map: Fribb['map'] = new Map(), byImdb: Fribb['byImdb'] = new Map(), byTmdb: Fribb['byTmdb'] = new Map(), byMal: Fribb['byMal'] = new Map(), byAnilist: Fribb['byAnilist'] = new Map(), byMovie: Fribb['byMovie'] = new Map(), whole = new Map<number, number>();
       for (const e of await getJSON<FribbEntry[]>('https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json')) {
         if (!e.kitsu_id) continue;
         if (e.mal_id && !byMal.has(e.mal_id)) byMal.set(e.mal_id, e.kitsu_id);
         if (e.anilist_id && !byAnilist.has(e.anilist_id)) byAnilist.set(e.anilist_id, e.kitsu_id);
-        // a film entry lists its TMDB films ([129]; it was one number), the first is the entry's own
+        // a film entry lists its TMDB films ([129], or one number), the first is the entry's own
         const films = ([] as number[]).concat(e.themoviedb_id?.movie ?? []);
         for (const f of films) if (!byMovie.has(f)) byMovie.set(f, e.kitsu_id);
         const tv = e.themoviedb_id?.tv, movie = films[0], se = e.season?.tmdb;

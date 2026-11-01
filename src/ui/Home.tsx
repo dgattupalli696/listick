@@ -52,21 +52,29 @@ export function Home({ view, kind }: { view: (body: ReactNode) => ReactNode; kin
   const phone = usePhone();
   const pkNow = useRef(pk), kindNow = useRef(kind);
   const shelves = useRef(new Map<string, { group?: Shelf | null; service?: Shelf | null }>());
+  const lastBody = useRef('');
 
-  const load = useCallback(async () => {
+  // poll: the timer's refresh, skipped when nothing changed
+  const load = useCallback(async (poll = false) => {
     const asked = Date.now(), p = pkNow.current, k = kindNow.current;
     try {
-      const r = await fetch(`/api/summary?group=${p.group}&gkind=${p.gkind}&svc=${encodeURIComponent(p.service)}&skind=${p.skind}`, { cache: 'no-cache' });
+      const url = `/api/summary?group=${p.group}&gkind=${p.gkind}&svc=${encodeURIComponent(p.service)}&skind=${p.skind}`;
+      const r = await fetch(url, { cache: 'no-cache' });
       if (r.status === 401) { signedOut.dispatchEvent(new Event('signedout')); return; }
       if (!r.ok) throw new Error(String(r.status));
-      const got: Summary = await r.json();
+      const body = url + await r.text();
       if (k !== kindNow.current) return;
-      setFetchedAt(asked); setOffline(false); shelves.current.clear(); setS(got); setSFor(k);
+      setFetchedAt(asked); setOffline(false);
+      if (poll && body === lastBody.current) return;
+      lastBody.current = body; shelves.current.clear(); setS(JSON.parse(body.slice(url.length)) as Summary); setSFor(k);
     } catch { setOffline(true); }
   }, [setOffline]);
+  // every 15 s while the tab is in sight, and at once when it comes back
   useEffect(() => {
-    const t = setInterval(load, 15000);
-    return () => clearInterval(t);
+    const poll = () => { if (!document.hidden) void load(true); };
+    const t = setInterval(poll, 15000);
+    document.addEventListener('visibilitychange', poll);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', poll); };
   }, [load]);
   // a page opened: its first choices, its data asked for at once, and the window back at the top
   useEffect(() => {
@@ -191,7 +199,7 @@ export function Home({ view, kind }: { view: (body: ReactNode) => ReactNode; kin
       <div className="body">
         <div className="main">
           {fresh && <Start />}
-          <Group id="hist" title="HISTORY" href="/lists/watched" hidden={ready && !hist.length} railClass="grid wcards rail" items={hist} keyOf={wideKey} card={(w) => <HistCard w={w} />} />
+          <Group id="hist" title="HISTORY" href="/history" hidden={ready && !hist.length} railClass="grid wcards rail" items={hist} keyOf={wideKey} card={(w) => <HistCard w={w} />} />
           <Group id="resume" title="CONTINUE WATCHING" hidden={!resume.length} railClass="grid wcards rail" items={resume} keyOf={wideKey}
             card={(w) => (w.cw ? <ResumeCard w={w} /> : <WideCard w={w} />)} />
           <Group id="cw" title="UP NEXT" hidden={ready && !upNext.length} railClass="grid wcards rail" items={upNext} keyOf={wideKey} card={(w) => <WideCard w={w} />} />
@@ -261,6 +269,11 @@ function StartRows() {
   );
 }
 
+// phone: no service in row names
+const rowTitle = (t: string, svc: boolean) => {
+  const at = svc ? t.lastIndexOf(' · ') : -1;
+  return at < 0 ? t.toUpperCase() : <>{t.slice(0, at).toUpperCase()}<span className="sv-of">{t.slice(at).toUpperCase()}</span></>;
+};
 // a picker's two rows, back at their start on a switch; with nothing in either, one row's space with a line of text instead
 function Pair({ root, shelf, empty }: { root: string; shelf: Shelf; empty: string }) {
   const none = !shelf.rows.some((r) => r.items.length);
@@ -268,7 +281,7 @@ function Pair({ root, shelf, empty }: { root: string; shelf: Shelf; empty: strin
     <>
       <Blank id={`${root}-blank`} text={none ? empty : null} />
       {shelf.rows.map((r, i) => (
-        <Group key={i} id={`${root}-${i}`} trend title={r.title.toUpperCase()} href={`/row/${root === 'svc' ? `svc_${shelf.id}_${r.id}` : r.id}`} hidden={!r.items.length} railClass="rail ptrack" items={r.items} keyOf={tileKey} card={trend}
+        <Group key={i} id={`${root}-${i}`} trend title={rowTitle(r.title, root === 'svc')} href={`/row/${root === 'svc' ? `svc_${shelf.id}_${r.id}` : r.id}`} hidden={!r.items.length} railClass="rail ptrack" items={r.items} keyOf={tileKey} card={trend}
           more={moreOf(r)} start={r.id} />
       ))}
     </>

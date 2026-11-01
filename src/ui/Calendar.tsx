@@ -1,7 +1,7 @@
 'use client';
 // The Airing page (/calendar): a month with the picked day's drawer under its week; on the phone, a timeline from today.
 import Link from 'next/link';
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { airDays, type Ep } from './Airing';
 import { getJ } from './lib/api';
 import { DASH, epLabel, hhmm } from './lib/format';
@@ -13,6 +13,11 @@ import { Ring } from './Stats';
 type Planned = { key: string; name: string; what: string; poster: string | null; movie: boolean; at: number };
 type Item = Ep & { what?: string };
 type Kind = 'all' | 'series' | 'anime';
+// drawer outline path
+function edgePath(w: number, h: number, col: number) {
+  const L = 0.5, T = 9.5, R = w - 0.5, B = h + 8.5, r = 14, x = Math.round(1 + ((col + 0.5) / 7) * (w - 2)) + 0.5;
+  return `M${L + r} ${T}H${x - 8}L${x} ${T - 8}L${x + 8} ${T}H${R - r}A${r} ${r} 0 0 1 ${R} ${T + r}V${B - r}A${r} ${r} 0 0 1 ${R - r} ${B}H${L + r}A${r} ${r} 0 0 1 ${L} ${B - r}V${T + r}A${r} ${r} 0 0 1 ${L + r} ${T}Z`;
+}
 const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY = 86400000;
 const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
@@ -56,6 +61,14 @@ export function Calendar() {
   const go = (d: Date) => setSel(d < first ? first : d > last ? last : d);
   // a step in the drawer keeps it in place on screen
   const drawerEl = useRef<HTMLDivElement>(null), page = useRef<HTMLDivElement>(null), held = useRef<number | null>(null);
+  // drawer size
+  const [box, setBox] = useState({ w: 0, h: 0 }), ro = useRef<ResizeObserver | null>(null);
+  const drawerRef = useCallback((el: HTMLDivElement | null) => {
+    drawerEl.current = el; ro.current?.disconnect();
+    if (!el) return;
+    ro.current = new ResizeObserver(() => setBox((b) => (b.w === el.offsetWidth && b.h === el.offsetHeight ? b : { w: el.offsetWidth, h: el.offsetHeight })));
+    ro.current.observe(el);
+  }, []);
   const step = (d: Date) => { held.current = drawerEl.current?.getBoundingClientRect().top ?? null; go(d); };
   useLayoutEffect(() => {
     const el = drawerEl.current, pg = page.current;
@@ -92,14 +105,14 @@ export function Calendar() {
   const weeks = Array.from({ length: cells.length / 7 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
   const same = (a: Date, b: Date) => a.getTime() === b.getTime();
 
-  // the drawer's days
-  const mid = epsOf(sel), alone = mid.length >= 7, left: Date[] = [], right: Date[] = [];
+  // drawer days
+  const mid = epsOf(sel), alone = mid.length >= 7, left: Date[] = [], right: Date[] = [], back = addDays(first, -7);
   if (!alone)
     for (const [side, dir] of [[left, -1], [right, 1]] as const) {
       let cards = 0;
       for (let k = 1; cards < 8; k++) {
         const d = addDays(sel, dir * k);
-        if (d < first || d > last) break;
+        if (d < back || d > last) break;
         if (dir < 0) side.unshift(d); else side.push(d);
         cards += Math.max(epsOf(d).length, 1);
       }
@@ -130,13 +143,13 @@ export function Calendar() {
   };
   const col = (sel.getDay() + 6) % 7;
   const drawer = (
-    <div ref={drawerEl} className="cal-drawer" role="region" aria-label={`${sel.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}, with the days around it`}
-      style={{ '--col': col } as CSSProperties}>
+    <div ref={drawerRef} className="cal-drawer" role="region" aria-label={`${sel.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}, with the days around it`}>
       <button type="button" className="rbtn" aria-label="Previous day" disabled={same(sel, first)} onClick={() => step(addDays(sel, -1))}><Icon d="M15 6l-6 6 6 6" size={16} width={2.2} /></button>
       <div ref={rowEl} className={`cal-row${alone ? ' alone' : ''}`}>
         <div className="cal-track">{left.map((d) => group(d))}{group(sel, true)}{right.map((d) => group(d))}</div>
       </div>
       <button type="button" className="rbtn" aria-label="Next day" disabled={same(sel, last)} onClick={() => step(addDays(sel, 1))}><Icon d="M9 6l6 6-6 6" size={16} width={2.2} /></button>
+      {box.w > 0 && <svg className="cal-edge" width={box.w} height={box.h + 9} aria-hidden="true"><path d={edgePath(box.w, box.h, col)} /></svg>}
     </div>
   );
 
@@ -180,14 +193,9 @@ export function Calendar() {
     <div className="stats" ref={page}>
       <div className="st-head">
         <h1 className="st-title">Airing</h1>
+        {/* phone: Filters */}
         {phone && <div className="st-period cal-filter">{pick('Filters', filters, () => setFilters(!filters), icon('M4 6h16M7 12h10M10 18h4'))}</div>}
-        {(!phone || filters) && <div className="cal-tools">
-          {!phone && <div className="st-period" role="group" aria-label="Month">
-            {pick('Earlier', false, () => setSel(today), icon('M15 6l-6 6 6 6'), !next)}
-            {pick(month.toLocaleDateString('en-GB', { month: 'long' }), true, () => setSel(next ? today : addDays(last, 1 - last.getDate())), <b>{month.toLocaleDateString('en-GB', { month: 'short' })}</b>)}
-            {pick('Later', false, () => go(addDays(last, 1 - last.getDate())), icon('M9 6l6 6-6 6'), next)}
-            {pick('Today', same(sel, today), () => setSel(today), icon('M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z'))}
-          </div>}
+        {phone && filters && <div className="cal-tools">
           <div className="st-period" role="group" aria-label="What">
             {pick('All', kind === 'all', () => setKind('all'), icon('M4 6h16M4 12h16M4 18h16'))}
             {pick('Shows', kind === 'series', () => setKind('series'), icon(PATHS.tv))}
@@ -201,7 +209,31 @@ export function Calendar() {
             <Link href="/settings/api"><Ring>{icon(`${PATHS.cal}M12 13v5M9.5 15.5h5`)}</Ring>Subscribe</Link>
           </div>
         </div>}
+        {/* wide: month, Filter, Subscribe */}
+        {!phone && <div className="cal-tools">
+          <div className="st-period" role="group" aria-label="Month">
+            {pick('Earlier', false, () => setSel(today), icon('M15 6l-6 6 6 6'), !next)}
+            <b className="cal-mname">{month.toLocaleDateString('en-GB', { month: 'long' })}</b>
+            {pick('Later', false, () => go(addDays(last, 1 - last.getDate())), icon('M9 6l6 6-6 6'), next)}
+            {pick('Today', same(sel, today), () => setSel(today), icon('M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z'))}
+          </div>
+          <div className="st-period">
+            {pick('Filter', filters, () => setFilters(!filters), icon('M4 6h16M7 12h10M10 18h4'))}
+            <Link href="/settings/api"><Ring>{icon(`${PATHS.cal}M12 13v5M9.5 15.5h5`)}</Ring>Subscribe</Link>
+          </div>
+        </div>}
       </div>
+      {!phone && filters && <div className="fpanel">
+        <div className="st-period" role="group" aria-label="What">
+          {pick('All', kind === 'all', () => setKind('all'), icon('M4 6h16M4 12h16M4 18h16'))}
+          {pick('Shows', kind === 'series', () => setKind('series'), icon(PATHS.tv))}
+          {pick('Anime', kind === 'anime', () => setKind('anime'), icon(PATHS.anime))}
+        </div>
+        <div className="st-period" role="group" aria-label="Show">
+          {pick('Unwatched', unwatched, () => setUnwatched(!unwatched), icon(PATHS.tick))}
+          {pick('Plan to watch', plan, () => setPlan(!plan), icon(PATHS.bookmark))}
+        </div>
+      </div>}
       {err && <p className="st-note">{`Couldn't load the calendar (${err}).`}</p>}
       {phone ? schedule && (
         <>

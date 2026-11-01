@@ -1,7 +1,7 @@
 'use client';
 // The Movies, TV and Anime pages' carousel: that kind's trending titles, one at a time on its wide image across the page's
 // whole width and up under the search. Each shows what the title card does at its head, bigger: name, the line of facts and age
-// rating, the scores (yours first if you rated it: a film, or a show's or anime's latest season) and the trailer after them (as on the card;
+// rating, the scores, the trailer and your status circle after them (as in the title views;
 // it plays in the carousel), and the story. It moves on every 6 s, except while the pointer is on the words, a trailer plays,
 // or motion is reduced. The titles' posters (dots on a phone) pick one, the current one with a bar
 // running out its 6 s; on a phone a swipe moves on or back
@@ -10,7 +10,7 @@ import { getJ } from './lib/api';
 import { cards, type Tile, type TilePatch, type TitleType } from './lib/media';
 import { titleUrl, type Title } from './lib/title';
 import { useOpens } from './Cards';
-import { Cert, Scores, YtLogo, metaOf } from './Title';
+import { Cert, Scores, StatusDial, YtLogo, metaOf } from './Title';
 
 type Item = Tile & { backdrop: string | null; overview: string | null; genres: string[]; rating: number | null };
 const NAME: Record<TitleType, string> = { movie: 'Movies', tv: 'Shows', anime: 'Anime' };
@@ -20,13 +20,6 @@ const wide = (u: string | null) => u?.replace('/t/p/w780/', '/t/p/w1280/') || un
 const tall = (u: string | null) => u?.replace(/\/t\/p\/w\d+\//, '/t/p/w780/') || undefined;
 // each title's card, asked once per page visit (the scores, age rating and trailer the carousel shows)
 const cardsGot = new Map<string, Promise<Title | null>>();
-// your rating as the row shows it: a film's; a show's (anime ones too) only for its latest season; a Kitsu anime entry is one
-// season, so that season's, or else the entry's own
-const yours = (d: Title) => {
-  if (d.type === 'movie') return d.you?.rating || null;
-  const last = Math.max(0, ...(d.seasons || []).map((x) => x.n));
-  return (last && d.you?.seasonRatings?.[last]) || (d.type === 'anime' && d.you?.rating) || null;
-};
 const cardOf = (key: string) => {
   if (!cardsGot.has(key)) cardsGot.set(key, getJ<Title>(titleUrl(key)).catch(() => null));
   return cardsGot.get(key)!;
@@ -75,6 +68,8 @@ export function Hero({ kind }: { kind: TitleType }) {
   // until the titles come in, the empty shade holds the carousel's place
   if (!t) return <section className="hero" aria-hidden="true"><div className="hero-shade" /></section>;
   const d = full[t.key];
+  // drawn: this slide and its two neighbours
+  const drawn = (n: number) => (n - at + items.length + 1) % items.length <= 2;
   return (
     <section className="hero" aria-roledescription="carousel" aria-label={`Trending ${NAME[kind].toLowerCase()}`}
       onTouchStart={(e) => { swipe.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
@@ -83,10 +78,10 @@ export function Hero({ kind }: { kind: TitleType }) {
         const dx = e.changedTouches[0].clientX - s.x, dy = e.changedTouches[0].clientY - s.y;
         if (Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(dy)) { setTrailer(null); setAt((n) => (n + (dx < 0 ? 1 : -1) + items.length) % items.length); }
       }}>
-      {items.map((x, n) => (
+      {items.map((x, n) => drawn(n) && (
         <picture key={x.key}>
           {x.poster && <source media="(max-width: 599px)" srcSet={tall(x.poster)} />}
-          <img className={`hero-bg${n === at ? ' on' : ''}`} src={wide(x.backdrop)} alt="" decoding="async" loading={n ? 'lazy' : 'eager'} />
+          <img className={`hero-bg${n === at ? ' on' : ''}`} src={wide(x.backdrop)} alt="" decoding="async" />
         </picture>
       ))}
       <div className="hero-shade opens" onClick={opens.onClick} onPointerEnter={opens.onPointerEnter} />
@@ -95,10 +90,11 @@ export function Hero({ kind }: { kind: TitleType }) {
         <h2 className="hero-title opens" {...opens}>{t.title}{t.label ? ` · ${t.label}` : ''}</h2>
         <div className="tc-meta hero-meta">{d ? metaOf(d) : [t.year, ...t.genres].filter(Boolean).join(' · ')}{d && <Cert d={d} />}</div>
         {d && (
-          <Scores d={d} mine={yours(d)}>
+          <Scores d={d}>
             {d.trailer && <button type="button" className="tc-ytico" aria-label="Play the trailer" onClick={() => setTrailer((d.trailer!.match(/[?&]v=([\w-]{6,})/) || [])[1] || null)}>
               <YtLogo /><b className="tc-link">Trailer</b>
             </button>}
+            <span className="tc-sep" /><StatusDial key={d.key} d={d} />
           </Scores>
         )}
         {t.overview && <p className="hero-story">{t.overview}</p>}

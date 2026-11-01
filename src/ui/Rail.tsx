@@ -8,41 +8,43 @@ import { getJ } from './lib/api';
 import { Icon } from './lib/icons';
 import type { Tile } from './lib/media';
 
-// how many cards a slide row shows at once: posters 9 / 6 / 5 / 3, wide cards 5 / 4 / 3 / 2 (desktop / tablet / large phone or
-// small tablet / phone, as in the CSS)
-const inView = (wide: boolean) => { const w = innerWidth; return w >= 1181 ? (wide ? 5 : 9) : w >= 801 ? (wide ? 4 : 6) : w >= 600 ? (wide ? 3 : 5) : (wide ? 2 : 3); };
+// how many cards a slide row shows at once: posters 7 / 6 / 2, wide cards 4 / 4 / 2 (desktop / tablet / phone, as in the CSS)
+const inView = (wide: boolean) => { const w = innerWidth; return w >= 1181 ? (wide ? 4 : 7) : w >= 801 ? (wide ? 4 : 6) : 2; };
 // a second's head start, so the visible posters get the bandwidth first, then when the browser is idle
 const idle = (fn: () => void) => setTimeout(() => ('requestIdleCallback' in window ? requestIdleCallback(fn, { timeout: 1500 }) : fn()), 1000);
 
 type More = { id: string; total: number; batch: number } | null;
 // cls: the section's class (default group, or group trend-group); a null title leaves the head with the ‹ › alone; href: the
-// grid circle beside the arrows opens the row as a page of its own (/row/<id>, a list)
-type Props<T> = { id: string; title: ReactNode; href?: string; titleId?: string; note?: ReactNode; hidden?: boolean; trend?: boolean; cls?: string; railClass: string;
+// grid circle beside the arrows opens the row as a page of its own (/row/<id>, a list); onAll: the same circle, opening it in place,
+// shown only with the arrows (a row that all fits has nothing more to show)
+type Props<T> = { id: string; title: ReactNode; href?: string; onAll?: () => void; titleId?: string; note?: ReactNode; hidden?: boolean; trend?: boolean; cls?: string; railClass: string;
   items: T[]; keyOf: (x: T) => string; card: (x: T) => ReactNode; more?: More;
   // a row moved to other titles (a picker switch) goes back to its start
   start?: string; empty?: ReactNode };
 
-export function Group<T>({ id, title, href, titleId, note, hidden, trend, cls, railClass, items, keyOf, card, more = null, start, empty }: Props<T>) {
+export function Group<T>({ id, title, href, onAll, titleId, note, hidden, trend, cls, railClass, items, keyOf, card, more = null, start, empty }: Props<T>) {
   const r = useRef<HTMLDivElement>(null);
   // a row is "the same" while its titles are; a changed one starts over: the cards that fit now (only their images load), the
   // rest when the browser is idle, and batches fetched again
   const sig = JSON.stringify(items.map(keyOf));
-  const [flushed, setFlushed] = useState('');
+  // the cards rendered: a screen's worth, three once the browser is idle, then two more screens at a time near the end
+  const [upto, setUpto] = useState({ sig: '', n: 0 });
   const [extra, setExtra] = useState<{ sig: string; items: Tile[]; total: number | null }>({ sig: '', items: [], total: null });
   const all = useRef<{ sig: string; items: Tile[] } | null>(null), loading = useRef(false);
   const ext = extra.sig === sig ? extra : { sig, items: [], total: null };
   const wide = railClass.includes('wcards');
-  const shown = flushed === sig ? items : items.slice(0, inView(wide));
+  const view = inView(wide), n = upto.sig === sig ? upto.n : view, local = n < items.length;
+  const shown = items.slice(0, n);
   useEffect(() => {
-    if (items.length <= inView(wide)) return;
-    const t = idle(() => setFlushed(sig));
+    if (items.length <= view) return;
+    const t = idle(() => setUpto((u) => (u.sig === sig ? u : { sig, n: 3 * view })));
     return () => clearTimeout(t);
   }, [sig]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const count = items.length + ext.items.length, total = ext.total ?? more?.total ?? count;
   const moreLeft = !!more && count < total;
   const loadMore = async () => {
-    setFlushed(sig);   // the row's own cards first, if they haven't come in yet
+    if (local) { setUpto({ sig, n: Math.min(items.length, n + 2 * view) }); return; }
     if (!more || !moreLeft || loading.current) return;
     loading.current = true;
     try {
@@ -59,11 +61,11 @@ export function Group<T>({ id, title, href, titleId, note, hidden, trend, cls, r
   const upd = useCallback(() => {
     const x = r.current; if (!x) return;
     const h = !x.classList.contains('rail') || x.scrollWidth <= x.clientWidth + 4;
-    const p = x.scrollLeft < 4, nx = x.scrollLeft + x.clientWidth >= x.scrollWidth - 4 && !moreLeft;
+    const p = x.scrollLeft < 4, nx = x.scrollLeft + x.clientWidth >= x.scrollWidth - 4 && !moreLeft && !local;
     const l = last.current;
     if (x.scrollLeft !== l.left) { l.dir = x.scrollLeft > l.left ? 'R' : 'L'; l.left = x.scrollLeft; }
     setNav(`${h ? 'h' : ''}${p ? 'p' : ''}${nx ? 'n' : ''}${l.dir}`);
-  }, [moreLeft]);
+  }, [moreLeft, local]);
   useEffect(() => { const f = requestAnimationFrame(upd); return () => cancelAnimationFrame(f); });
   useEffect(() => { window.addEventListener('resize', upd); return () => window.removeEventListener('resize', upd); }, [upd]);
   useEffect(() => { if (r.current) r.current.scrollLeft = 0; }, [start]);
@@ -76,10 +78,10 @@ export function Group<T>({ id, title, href, titleId, note, hidden, trend, cls, r
     tick.current = requestAnimationFrame(() => {
       tick.current = 0; upd();
       const x = r.current;
-      if (x && moreLeft && x.scrollLeft + 2 * x.clientWidth >= x.scrollWidth) void loadMore();
+      if (x && (moreLeft || local) && x.scrollLeft + 2 * x.clientWidth >= x.scrollWidth) void loadMore();
     });
   };
-  // a trackpad or mouse moves a row half as far as the browser would (at full speed it raced past the cards); snapping is off while it
+  // a trackpad or mouse moves a row half as far as the browser would; snapping is off while it
   // scrolls (.wheeling) and snaps the row to a card edge 150 ms after the last step. Up/down scrolling stays the page's
   useEffect(() => {
     const x = r.current; if (!x) return;
@@ -116,7 +118,8 @@ export function Group<T>({ id, title, href, titleId, note, hidden, trend, cls, r
         {title === null ? <span /> : <h2 className="sh" id={titleId}>{title}</h2>}{note}
         <div className="rail-nav" hidden={!href && nav.includes('h')}>
           {href && <Link href={href} className="rbtn" aria-label="See all"><Icon d="M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z" size={15} /></Link>}
-          {href && !nav.includes('h') && <span className="rsep" aria-hidden="true" />}
+          {onAll && !nav.includes('h') && <button type="button" className="rbtn" aria-label="See all" onClick={onAll}><Icon d="M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z" size={15} /></button>}
+          {(href || onAll) && !nav.includes('h') && <span className="rsep" aria-hidden="true" />}
           {!nav.includes('h') && <>
             <button type="button" className={`rbtn rarrow${nav.includes('L') ? ' lit' : ''}`} aria-label="Previous" disabled={nav.includes('p')} onClick={() => void go(-1)}><Icon d="M15 6l-6 6 6 6" size={16} width={2.2} /></button>
             <button type="button" className={`rbtn rarrow${nav.includes('R') ? ' lit' : ''}`} aria-label="Next" disabled={nav.includes('n')} onClick={() => void go(1)}><Icon d="M9 6l6 6-6 6" size={16} width={2.2} /></button>

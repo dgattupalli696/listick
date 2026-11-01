@@ -34,7 +34,7 @@ export async function titlesOf(keys: (string | null | undefined)[]) {
 }
 // an anime's own genres where the anime-genres job found them (TMDB's are few and loose for anime: Sci-Fi & Fantasy as one)
 export const genresOf = (t: Title | null | undefined) => (t?.anime_genres?.length ? t.anime_genres : Array.isArray(t?.genres) ? t.genres : []);
-// titles the watchlist doesn't hold, older than 6 months (TMDB's caching limit), are dropped
+// titles no watchlist, history, rating or list holds, older than 6 months (TMDB's caching limit), are dropped
 export const prune = () => q.run(`delete from titles where fetched_at < ? and key not in (select key from watchlist)
   and key not in (select key from history) and key not in (select key from ratings) and key not in (select key from list_items)`, Date.now() - 182 * 24 * HOUR);
 
@@ -78,14 +78,16 @@ export const fromTmdb = (type: 'movie' | 'tv') => (x: TmdbItem): Title => ({
 });
 // Kitsu's synopses end with where they came from ("(Source: ANN)", "[Written by MAL Rewrite]"): not shown
 export const cleanSynopsis = (t: string | null | undefined) => (t ? t.replace(/\s*[([](?:source|written by)[^)\]]*[)\]]\s*$/i, '').trim() || null : null);
+// Kitsu's newest uploads come only as signed links that expire after 15 minutes: not kept
+export const kitsuImg = (u: string | null | undefined) => (u && !u.includes('X-Amz-') ? u : null);
 export const fromKitsu = (x: KitsuResource): KitsuTitle => {
   const a = x.attributes;
   return {
     alt: [a.titles?.en, a.canonicalTitle, a.titles?.en_jp].filter(present), english: !!a.titles?.en,
     key: `kitsu:anime:${x.id}`, type: 'anime', ...cleanTitle(a.titles?.en || a.titles?.en_jp || a.canonicalTitle),
     year: Number((a.startDate || '').slice(0, 4)) || null,
-    poster: a.posterImage?.medium || a.posterImage?.large || null,
-    backdrop: a.coverImage?.large || a.coverImage?.original || null,
+    poster: kitsuImg(a.posterImage?.medium || a.posterImage?.large),
+    backdrop: kitsuImg(a.coverImage?.large || a.coverImage?.original),
     rating: a.averageRating ? Math.round(Number(a.averageRating)) / 10 : null, rating_src: 'kitsu',
     overview: cleanSynopsis(a.synopsis), url: `https://kitsu.app/anime/${a.slug}`, fetched_at: Date.now(), anime: 1, episodes: a.episodeCount || null,
     genres: null,

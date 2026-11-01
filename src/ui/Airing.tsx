@@ -30,7 +30,7 @@ export function airDays(schedule: AirEp[] = []) {
 
 export function Airing({ S }: { S: Summary | null }) {
   const phone = usePhone();
-  // the phone opens on Week (Month makes the panel tall there)
+  // the phone opens on Week
   const [view, setView] = useState<'week' | 'month'>(() => (matchMedia('(max-width: 800px)').matches ? 'week' : 'month'));
   const [sel, setSel] = useState<string | null>(null);
   const [off, setOff] = useState(0);

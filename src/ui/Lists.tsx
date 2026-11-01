@@ -13,11 +13,13 @@ import { Icon, PATHS } from './lib/icons';
 import { listsBus, listsChanged } from './lib/lists';
 import { Builder, Chips, ICON, KIND, label, Sw, TVDB_CATS, type Draft, type Filters, type Media } from './ListBuilder';
 import { ShelfGrid, ShelfWrap, type Item } from './Shelf';
+import { Group } from './Rail';
 import { Sheet } from './Sheet';
 
 type Card = { id: string; name: string; description: string | null; kind: 'manual' | 'smart'; media: Media | null; filters: Filters | null;
-  shared: boolean; owner: string | null; count: number; refreshedAt: number | null; posters: string[] };
-type Built = { plan: { n: number; movie: number; tv: number; posters: string[] }; watched: { n: number; posters: string[] }; rated: { n: number; avg: number | null; posters: string[] } };
+  shared: boolean; owner: string | null; count: number; refreshedAt: number | null; posters: string[]; backdrop: string | null; changedAt: number; onHome: boolean };
+type Built = { plan: { n: number; movie: number; tv: number; posters: string[]; backdrop: string | null }; watched: { n: number; plays: number; posters: string[]; backdrop: string | null };
+  rated: { n: number; avg: number | null; posters: string[]; backdrop: string | null } };
 type Page = { lists: Card[]; following: Card[]; shared: Card[]; builtin: Built; genres: Record<Media, string[]> };
 type Open = Omit<Card, 'kind'> & { kind: Card['kind'] | 'builtin'; items: Item[]; mine?: boolean; following?: boolean };
 type Naming = { id?: string; name: string; description: string; row?: boolean; from: HTMLElement | null };
@@ -52,6 +54,10 @@ export function Lists() {
   const [page, setPage] = useState<Page | null>(null), [err, setErr] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null), [naming, setNaming] = useState<Naming | null>(null);
   const [tvdb, setTvdb] = useState(false);
+  // list order
+  const [sort, setSortNow] = useState<'recent' | 'az' | 'most'>(() => { try { const v = localStorage.getItem('lists-sort'); return v === 'az' || v === 'most' ? v : 'recent'; } catch { return 'recent'; } });
+  const setSort = (v: 'recent' | 'az' | 'most') => { setSortNow(v); try { localStorage.setItem('lists-sort', v); } catch { /* private window */ } };
+  const sorted = (ls: Card[]) => [...ls].sort((a, c) => (sort === 'az' ? a.name.localeCompare(c.name) : sort === 'most' ? c.count - a.count : c.changedAt - a.changedAt));
   useEffect(() => { let live = true; getJ<{ sources: { tvdb?: boolean } }>('/api/config').then((c) => { if (live) setTvdb(!!c.sources.tvdb); }, () => {}); return () => { live = false; }; }, []);
   const load = useCallback(() => getJ<Page>('/api/lists').then((p) => { setPage(p); setErr(''); }, (e: Error) => setErr(e.message)), []);
   useEffect(() => { let live = true; getJ<Page>('/api/lists').then((p) => { if (live) setPage(p); }, (e: Error) => { if (live) setErr(e.message); }); return () => { live = false; }; }, []);
@@ -70,25 +76,40 @@ export function Lists() {
             <PkBtn label="Smart list" data={{}} face={ICON.smart} on onClick={() => setDraft({ name: '', description: '', media: 'movie', filters: {} })} />
           </div>
         </div>
-        {/* every list the same card (design A): four posters across its top, the name and a line; the built-in three first */}
-        <div className="l-strips">
-          <StripCard href="/lists/plan" name="Plan to watch" sub={`${b.plan.n} · ${b.plan.movie} movies · ${b.plan.tv} shows`} posters={b.plan.posters}
-            mark={<Icon d={PATHS.bookmark} size={13} width={2} />} />
-          <StripCard href="/lists/watched" name="Watched" sub={`${titles(b.watched.n)} · your History`} posters={b.watched.posters} mark={<Icon d={PATHS.watched} size={13} width={2.3} />} />
-          <StripCard href="/lists/rated" name="Rated" sub={`${titles(b.rated.n)}${b.rated.avg ? ` · avg ${b.rated.avg}` : ''}`} posters={b.rated.posters}
-            mark={<b className="l-rate">{b.rated.avg ?? '–'}</b>} />
-          {page.lists.map((l) => <ListCard key={l.id} l={l} />)}
+        {/* built-in lists */}
+        <div className="l-band">
+          <MineCard href="/lists/plan" name="Plan to watch" b={b.plan} ring={`conic-gradient(var(--st-movie) 0 ${b.plan.n ? (b.plan.movie / b.plan.n) * 100 : 0}%, var(--st-tv) 0 100%)`}
+            face={<Icon d={PATHS.bookmark} size={30} width={1.9} />}
+            sub={<><span><b>{b.plan.n}</b> {b.plan.n === 1 ? 'title' : 'titles'}</span><span className="l-dot" style={{ '--c': 'var(--st-movie)' } as React.CSSProperties}>{b.plan.movie} films</span><span className="l-dot" style={{ '--c': 'var(--st-tv)' } as React.CSSProperties}>{b.plan.tv} shows</span></>} />
+          <MineCard href="/history" name="Watched" b={b.watched} ring="conic-gradient(var(--accent) 0 100%)" face={<Icon d={PATHS.watched} size={30} width={2.1} />}
+            sub={<><span><b>{b.watched.n}</b> {b.watched.n === 1 ? 'title' : 'titles'}</span>{!!b.watched.plays && <span>{b.watched.plays} plays this month</span>}</>} />
+          <MineCard href="/lists/rated" name="Rated" b={b.rated} ring={`conic-gradient(var(--accent) 0 ${(b.rated.avg || 0) * 10}%, var(--l-ring) 0)`} face={<b className="mono">{b.rated.avg ?? '–'}</b>}
+            sub={<><span><b>{b.rated.n}</b> {b.rated.n === 1 ? 'title' : 'titles'}</span>{b.rated.avg != null && <span>average {b.rated.avg}</span>}</>} />
         </div>
-        {([['FOLLOWING', page.following], ['SHARED ON THIS LISTICK', page.shared]] as [string, Card[]][]).map(([head, ls]) => ls.length > 0 && (
+
+        <section className="l-sec">
+          <div className="l-sh"><h2 className="l-shn">Your lists<span className="mono">{page.lists.length}</span></h2>
+            {page.lists.length > 1 && <div className="l-sorts" role="group" aria-label="Order">
+              {([['recent', 'Recently changed'], ['az', 'A–Z'], ['most', 'Most titles']] as const).map(([v, n]) =>
+                <button key={v} type="button" className={sort === v ? 'on' : ''} aria-pressed={sort === v} onClick={() => setSort(v)}>{n}</button>)}
+            </div>}
+          </div>
+          <div className="l-cards">
+            {sorted(page.lists).map((l) => <ListCard key={l.id} l={l} />)}
+            <button type="button" className="l-new" onClick={() => setNaming({ name: '', description: '', from: null })}><span><span className="c"><Icon d={PATHS.plus} size={20} width={1.9} /></span>New list</span></button>
+          </div>
+        </section>
+        {([['Following', page.following], ['Shared on this Listick', page.shared]] as [string, Card[]][]).map(([head, ls]) => ls.length > 0 && (
           <section key={head} className="l-sec">
-            <div className="group-head"><h2 className="sh">{head}</h2></div>
-            <div className="l-strips">{ls.map((l) => <ListCard key={l.id} l={l} />)}</div>
+            <div className="l-sh"><h2 className="l-shn">{head}<span className="mono">{ls.length}</span></h2></div>
+            <div className="l-cards">{ls.map((l) => <ListCard key={l.id} l={l} />)}</div>
           </section>
         ))}
 
-        <div className="gen-rows l-presets"><div className="group-head pick-head"><h2 className="sh">START A SMART LIST</h2><div className="pick-tools"><div className="pk-set">
-          {PRESETS.filter(([, , d]) => !d.filters.tvdbGenre || tvdb).map(([n, f, d]) => <PkBtn key={n} label={n} data={{}} face={f} on={false} onClick={() => setDraft({ description: '', name: '', ...d })} />)}
-        </div></div></div></div>
+        <section className="l-sec">
+          <Group id="l-presets" title="Start a smart list" cls="group l-pgroup" railClass="rail l-presets" items={PRESETS.filter(([, , d]) => !d.filters.tvdbGenre || tvdb)} keyOf={([n]) => n}
+            card={([n, f, d]) => <button type="button" className="l-preset" onClick={() => setDraft({ description: '', name: '', ...d })}><span className="c"><Icon d={f} size={20} width={1.9} /></span>{n}</button>} />
+        </section>
       </div>
       <Sheet id="lname" title="NEW EMPTY LIST" open={!!naming} from={naming?.from ?? null} onClose={() => setNaming(null)}>
         {naming && <NameForm v={naming} done={async (id) => { setNaming(null); if (id) router.push(`/lists/${id}`); }} />}
@@ -174,8 +195,8 @@ export function ListPage({ id }: { id: string }) {
   );
 }
 
-// a list asked for as a finger (or the pointer) comes down on its card, so it's often there by the time its page opens;
-// kept a few seconds only, so a card pressed and left doesn't open stale later
+// a list asked for as a finger (or the pointer) comes down on its card;
+// kept a few seconds only
 const warm = new Map<string, { at: number; p: Promise<Open> }>();
 const warmList = (id: string) => {
   if (Date.now() - (warm.get(id)?.at ?? 0) < 5000) return;
@@ -216,26 +237,37 @@ function ListMenu({ items }: { items: MenuItem[] }) {
     </div>
   );
 }
-function StripCard({ href, name, sub, posters, mark, shared }: {
-  href: string; name: string; sub: string; posters: string[]; mark: ReactNode; shared?: boolean }) {
-  const p = posters.slice(0, 4);
+// built-in list card
+function MineCard({ href, name, b, ring, face, sub }: { href: string; name: string; b: { posters: string[]; backdrop: string | null }; ring: string; face: ReactNode; sub: ReactNode }) {
   return (
-    <Link href={href} className="glass l-strip" onPointerDown={() => warmList(href.slice('/lists/'.length))}>
-      <span className="l-sp">{[0, 1, 2, 3].map((i) => (p[i] ? <img key={i} src={p[i]} alt="" loading="lazy" /> : <span key={i} />))}
-        <span className="l-pd"><span>{mark}</span></span></span>
-      <span className="l-sb">
-        <span className="l-st2">
-          <span className="l-sn"><b>{name}</b></span>
-          <span className="l-ss">{sub}</span>
-        </span>
-        {shared && <span className="l-st sh" title="Shared"><Icon d={ICON.share} size={13} width={2} /></span>}
-      </span>
+    <Link href={href} className="l-mine" onPointerDown={() => { if (href.startsWith('/lists/')) warmList(href.slice('/lists/'.length)); }}>
+      {(b.backdrop || b.posters[0]) && <img className="l-bd" src={b.backdrop || b.posters[0]} alt="" loading="lazy" />}
+      <span className="l-ring" style={{ '--g': ring } as React.CSSProperties}>{face}</span>
+      <span className="l-tx"><b className="l-mn">{name}</b><span className="l-msub">{sub}</span></span>
+      <span className="l-mp">{b.posters.slice(0, 3).map((p, i) => <img key={i} src={p} alt="" loading="lazy" />)}</span>
     </Link>
   );
 }
+const WHEN = (t: number) => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? `${Math.max(1, m)} min ago` : m < 48 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
+// list card
 function ListCard({ l }: { l: Card }) {
-  const sub = [titles(l.count), l.owner ? `by ${l.owner}` : l.kind === 'smart' ? ago(l.refreshedAt) : null].filter(Boolean).join(' · ');
-  return <StripCard href={`/lists/${l.id}`} name={l.name} sub={sub} posters={l.posters} mark={<Icon d={l.kind === 'smart' ? ICON.smart : PATHS.lists} size={13} width={2} />} shared={!l.owner && l.shared} />;
+  const sub = [titles(l.count), l.owner ? `by ${l.owner}` : `${l.kind === 'smart' ? 'refreshed' : 'changed'} ${WHEN(l.changedAt)}`].join(' · ');
+  return (
+    <Link href={`/lists/${l.id}`} className="l-card" onPointerDown={() => warmList(l.id)}>
+      <span className="l-cover">
+        {(l.backdrop || l.posters[0]) && <img className="l-bd" src={l.backdrop || l.posters[0]} alt="" loading="lazy" />}
+        <span className="l-mini">{l.posters.slice(0, 3).map((p, i) => <img key={i} src={p} alt="" loading="lazy" />)}</span>
+        <span className="l-cn"><b>{l.name}</b><span>{sub}</span></span>
+      </span>
+      <span className="l-facts">
+        <span className="l-fact" style={l.media ? ({ '--k': `var(--st-${TINT[l.media]})` } as React.CSSProperties) : undefined}>
+          <span className="c"><Icon d={l.kind === 'smart' ? ICON.smart : PATHS.lists} size={13} width={2} /></span><span>{l.kind === 'smart' ? 'Smart' : 'Manual'}{l.media && <i>{` · ${KIND[l.media][0]}`}</i>}</span>
+        </span>
+        {l.onHome && <span className="l-fact on"><span className="c"><Icon d={PATHS.home} size={13} width={2} /></span>On Home</span>}
+        {!l.owner && l.shared && <span className="l-fact"><span className="c"><Icon d={ICON.share} size={13} width={2} /></span>Shared</span>}
+      </span>
+    </Link>
+  );
 }
 const Badge = ({ l }: { l: Pick<Card, 'media'> & { kind: Open['kind'] } }) => (<>
   <span className={`l-badge${l.kind === 'smart' ? ' smart' : ''}`}>{l.kind === 'smart' ? 'SMART' : 'MANUAL'}</span>
