@@ -2795,7 +2795,22 @@ body.signed-out .wall, body.signed-out .siderail, body.signed-out .pbar { visibi
 .hn-acts { display: flex; gap: 12px; flex-shrink: 0; }
 .hn-acts .tep-act :is(.tc-erate, .tc-mark) .tc-circ { width: 42px; height: 42px; }
 @media (max-width: 1180px) { .tf-next { width: 320px; } }
-@media (max-width: 800px) { .tf-next { display: none; } }
+/* phone: Next up */
+@media (max-width: 800px) {
+  .tf-next { position: static; width: auto; }
+  .tf-next .hero-next { position: relative; overflow: hidden; gap: 0; padding: 0; border: 0; border-radius: 12px; background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .tf-next .hero-next::after { content: ""; position: absolute; inset: 0; z-index: 2; border-radius: inherit; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent); pointer-events: none; }
+  .hn-art { position: relative; }
+  .hn-art .hn-still { width: 100%; border-radius: 0; }
+  .tf-next .hn-row { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; padding: 48px 64px 12px 14px; pointer-events: none; background: linear-gradient(to top, rgba(11, 16, 32, 0.96) 35%, transparent); }
+  .tf-next .hn-tx { pointer-events: auto; }
+  .tf-next .hn-tx b { font-size: var(--fs-18); }
+  .hn-art .tc-nexttag { left: 10px; top: 10px; padding: 3px 8px; font-size: var(--fs-11); }
+  .hn-art .tc-markwrap { position: absolute; right: 10px; bottom: 10px; z-index: 3; }
+  .hn-art .tc-mark .tc-circ { width: 40px; height: 40px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5); }
+  .hn-art .tc-mark .tc-circ > span { --ring: 3.5px; }
+  .hn-art .tc-mark .tc-circ svg { width: 17px; height: 17px; }
+}
 @media (max-width: 800px) { .sv-of { display: none; } }
 /* phone: status row */
 @media (max-width: 800px) {

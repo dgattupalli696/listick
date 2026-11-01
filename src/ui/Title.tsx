@@ -373,6 +373,7 @@ function TitleFull({ d, close, leave, scroller, player }: { d: Title; close: () 
   // Similar grid
   const [grid, setGrid] = useState(false);
   const { backRef } = useTitle();
+  const phone = usePhone();
   useEffect(() => {
     if (!grid) return;
     scroller.current?.scrollTo({ top: 0 });
@@ -398,16 +399,14 @@ function TitleFull({ d, close, leave, scroller, player }: { d: Title; close: () 
     <>
       {top}
       <section className="hero tf-hero">
-        <picture>
-          {d.poster && <source media="(max-width: 599px)" srcSet={d.poster.replace(/\/t\/p\/w\d+\//, '/t/p/w780/')} />}
-          {(d.backdrop || d.poster) && <img className="hero-bg on" src={wide(d.backdrop || d.poster)} alt="" />}
-        </picture>
+        {(d.backdrop || d.poster) && <img className="hero-bg on" src={wide(d.backdrop || d.poster)} alt="" />}
         <div className="hero-shade" />
         <div className="hero-body"><Head d={d} h="h2" />{d.overview && <p className="hero-story">{d.overview}</p>}</div>
-        {d.type !== 'movie' && <div className="tf-next" ref={setNextSlot} />}
+        {d.type !== 'movie' && !phone && <div className="tf-next" ref={setNextSlot} />}
         {player}
       </section>
       <div className="tf-body">
+        {d.type !== 'movie' && phone && <div className="tf-next" ref={setNextSlot} />}
         <section className="tf-sec tf-ov">
           {d.overview && <Story key={d.key} d={d} />}
           <Details d={d} cls="tf-details" />

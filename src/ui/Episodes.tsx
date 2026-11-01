@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { PIcon, useRingRate, useTwoTap } from './Cards';
 import { getJ, postJ } from './lib/api';
 import { Icon } from './lib/icons';
+import { usePhone } from './lib/home';
 import { useTitle, type Episode, type PickArgs, type Play, type Title } from './lib/title';
 
 export const fmtDay = (iso: string | null | undefined) => (iso ? new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null);
@@ -298,27 +299,31 @@ function NextCard({ d, e, episodes, season, markEpisodes, open }: { d: Title; e:
 function HeroNext({ d, e, episodes, season, markEpisodes, open }: { d: Title; e: Episode; episodes: Episode[]; season: number; markEpisodes: Mark; open: Open }) {
   const ep = useEpisode(d, e, episodes, season, markEpisodes);
   const mkRef = useRef<HTMLButtonElement>(null);
-  const name = e.name || `Episode ${e.ep}`, now = playing(d, e, season);
+  const name = e.name || `Episode ${e.ep}`, now = playing(d, e, season), phone = usePhone();
+  const mark = <button ref={mkRef} type="button" className={`tc-mark${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel} disabled={ep.upcoming}
+    onClick={() => ep.tick(mkRef.current)}><Circ><TickIcon armed={ep.ask.armed} upcoming={ep.upcoming} /></Circ></button>;
   return (
     <div className="hero-next">
-      <button type="button" className="hn-still" aria-label={name} onClick={() => open(e.ep)}>
-        {epImg(d, e) && <img src={epImg(d, e)!} alt="" className={e.still ? undefined : 'fb'} />}
-      </button>
+      <div className="hn-art">
+        <button type="button" className="hn-still" aria-label={name} onClick={() => open(e.ep)}>
+          {epImg(d, e) && <img src={epImg(d, e)!} alt="" className={e.still ? undefined : 'fb'} />}
+        </button>
+        {phone && <><span className={`tc-nexttag${now ? ' playing' : ''}`}>{now ? 'Watching' : ep.upcoming ? airs(e.air) : 'Next up'}</span><div className="tc-markwrap">{mark}</div></>}
+      </div>
       <div className="hn-row">
         <button type="button" className="hn-tx" onClick={() => open(e.ep)}>
           <span className={`hn-k${now ? ' now' : ''}`}>{now ? 'Watching' : ep.upcoming ? airs(e.air) : 'Up next'}{` · ${season ? `S${season} ` : ''}E${e.ep}`}</span>
           <b>{name}</b>
           <span className="hn-d">{[ep.upcoming ? null : epDay(e.air), e.runtime ? `${e.runtime}m` : null].filter(Boolean).join(' · ')}</span>
         </button>
-        <div className="hn-acts">
+        {!phone && <div className="hn-acts">
           {!ep.upcoming && <div className="tep-act"><RateCircle cls="tc-erate" state={e.mine ? ' on' : ''} v={e.mine || 0} current={e.mine || 0} label={e.mine ? `Your rating ${e.mine.toFixed(1)}` : 'Drag to rate'}
             save={(n) => rateIt(d, n, e.se ?? season, e.tep ?? e.ep)} /><span className={`tc-al${e.mine ? ' on' : ''}`}>{e.mine ? 'Rated' : 'Rate'}</span></div>}
           <div className="tep-act">
-            <button ref={mkRef} type="button" className={`tc-mark${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel} disabled={ep.upcoming}
-              onClick={() => ep.tick(mkRef.current)}><Circ><TickIcon armed={ep.ask.armed} upcoming={ep.upcoming} /></Circ></button>
+            {mark}
             <span className={`tc-al${ep.ask.armed ? ' bad' : ''}`}>{ep.ask.armed ? 'Remove?' : ep.upcoming ? 'Not out' : 'Watch'}</span>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );
