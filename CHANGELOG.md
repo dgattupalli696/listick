@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.2](https://github.com/listicktv/listick/compare/v0.14.1...v0.14.2) (2026-11-01)
+
+
+### Bug Fixes
+
+* desktop Next up card matches the phone one ([691393f](https://github.com/listicktv/listick/commit/691393fa24a51024e64eec0114460781854cce23))
+
 ## [0.14.1](https://github.com/listicktv/listick/compare/v0.14.0...v0.14.1) (2026-11-01)
 
 
