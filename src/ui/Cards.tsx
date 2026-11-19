@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { getJ, postJ } from './lib/api';
+import { CARD_SIZES, srcs } from './lib/format';
 import { useHome, usePhone } from './lib/home';
 import { Icon, PATHS } from './lib/icons';
 import { openAddTo } from './lib/lists';
@@ -280,7 +281,7 @@ export function TrendCard({ t, dismiss }: { t: Tile; dismiss?: (key: string) => 
   return (
     <div className="tcard" aria-label={`${t.title}${t.label ? ` · ${t.label}` : ''}${t.year ? ` (${t.year})` : ''}${t.why ? ` · ${t.why}` : ''}`}>
       <PosterArt t={t} dismiss={t.dismiss && dismiss ? () => dismiss(t.key) : null}>
-        <img alt="" loading="lazy" decoding="async" src={t.poster || undefined} className="opens" {...opens} />
+        <img alt="" loading="lazy" decoding="async" src={t.poster || undefined} srcSet={srcs(t.poster, 'poster')} sizes={CARD_SIZES} className="opens" {...opens} />
         {now ? <span className="trate playing">WATCHING</span> : t.tag && <span className="trate">{t.tag}</span>}
       </PosterArt>
       <div className="names"><span className="name">{t.title}</span><span className="host mono">{t.note || [t.year, t.label].filter(Boolean).join(' · ')}</span></div>

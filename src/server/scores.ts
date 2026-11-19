@@ -1,7 +1,9 @@
 // Other sources' scores for smart lists: IMDb, Rotten Tomatoes and Metacritic (through OMDb), MyAnimeList and Kitsu (anime, by
 // Fribb's links), checked title by title and kept in title_scores (a score, or null: checked, the source has none) for 30 days.
 // TMDB can't filter on them, so a list with these floors keeps a pool of TMDB candidates (meta list-pool:<id>) and takes those
-// that pass; the worker's scores job checks the rest a few at a time, within OMDb's daily allowance, and picks the lists again
+// that pass; the worker's scores job checks the rest a few at a time, within OMDb's daily allowance, and picks the lists again.
+// Awards likewise (source 'awards')
+import { awardBits, awardsPass } from './awards';
 import { omdbFor } from './details';
 import { q } from './db';
 import { fribb, loadFribb } from './mapping';
@@ -13,42 +15,52 @@ export type Src = 'imdb' | 'rt' | 'mc' | 'mal' | 'kitsu';
 const SRC: Src[] = ['imdb', 'rt', 'mc', 'mal', 'kitsu'];
 // a list's floors (imdb and mal 0-10, rt and kitsu in %, mc 0-100), whether a title must pass all of them or any, and what a
 // source with no score for a title counts as
-export type ScoreRule = { ext?: Partial<Record<Src, number>>; meet?: 'all' | 'any'; missing?: 'out' | 'keep' };
+// awards: any of these; awardsOut: none of these
+export type ScoreRule = { ext?: Partial<Record<Src, number>>; meet?: 'all' | 'any'; missing?: 'out' | 'keep'; awards?: string[]; awardsOut?: string[] };
+type Got = Src | 'awards';
 const OMDB: Src[] = ['imdb', 'rt', 'mc'];
+// awards use OMDb when there's a key
+const usesOmdb = (s: Got) => OMDB.includes(s as Src) || (s === 'awards' && !!env('OMDB_API_KEY'));
 const STALE = 30 * 24 * HOUR;
 // the sources this instance can check (OMDb and MyAnimeList need their keys)
-const sourcesOn = (): Record<Src, boolean> => ({ imdb: !!env('OMDB_API_KEY'), rt: !!env('OMDB_API_KEY'), mc: !!env('OMDB_API_KEY'), mal: !!env('MAL_CLIENT_ID'), kitsu: true });
+const sourcesOn = (): Record<Got, boolean> => ({ imdb: !!env('OMDB_API_KEY'), rt: !!env('OMDB_API_KEY'), mc: !!env('OMDB_API_KEY'), mal: !!env('MAL_CLIENT_ID'), kitsu: true, awards: true });
 export const floorsOf = (r: ScoreRule) => Object.entries(r.ext || {}).filter(([s, v]) => SRC.includes(s as Src) && typeof v === 'number' && v > 0) as [Src, number][];
+// what a list needs checked per title
+const needs = (r: ScoreRule): Got[] => [...floorsOf(r).map(([s]) => s), ...(r.awards?.length || r.awardsOut?.length ? ['awards' as const] : [])];
+export const scored = (r: ScoreRule) => needs(r).length > 0;
 
-type Known = Map<string, Partial<Record<Src, number | null>>>;
+type Known = Map<string, Partial<Record<Got, number | null>>>;
 export async function known(keys: string[]): Promise<Known> {
   const out: Known = new Map();
   if (!keys.length) return out;
-  for (const r of await q.all<{ key: string; source: Src; score: number | null; checked_at: number }>('select key, source, score, checked_at from title_scores where key = any(?)', keys))
+  for (const r of await q.all<{ key: string; source: Got; score: number | null; checked_at: number }>('select key, source, score, checked_at from title_scores where key = any(?)', keys))
     if (Date.now() - r.checked_at < STALE) (out.get(r.key) || out.set(r.key, {}).get(r.key)!)[r.source] = r.score;
   return out;
 }
 // pass, fail, or pending (a source not checked yet decides it)
-export function verdict(s: Partial<Record<Src, number | null>> | undefined, r: ScoreRule): 'pass' | 'fail' | 'pending' {
-  const each = floorsOf(r).map(([src, floor]) => {
+export function verdict(s: Partial<Record<Got, number | null>> | undefined, r: ScoreRule): 'pass' | 'fail' | 'pending' {
+  const floors = floorsOf(r), each = floors.map(([src, floor]) => {
     const v = s?.[src];
     return v === undefined ? 'unknown' : v === null ? (r.missing === 'keep' ? 'pass' : 'fail') : v >= floor ? 'pass' : 'fail';
   });
-  if (r.meet === 'any') return each.includes('pass') ? 'pass' : each.includes('unknown') ? 'pending' : 'fail';
-  return each.includes('fail') ? 'fail' : each.includes('unknown') ? 'pending' : 'pass';
+  const scores = !floors.length ? 'pass' : r.meet === 'any' ? (each.includes('pass') ? 'pass' : each.includes('unknown') ? 'pending' : 'fail')
+    : each.includes('fail') ? 'fail' : each.includes('unknown') ? 'pending' : 'pass';
+  const a = s?.awards, awards = !needs(r).includes('awards') ? 'pass' : a === undefined ? 'pending' : awardsPass(a || 0, r.awards, r.awardsOut) ? 'pass' : 'fail';
+  return scores === 'fail' || awards === 'fail' ? 'fail' : scores === 'pending' || awards === 'pending' ? 'pending' : 'pass';
 }
 
-const save = (key: string, src: Src, score: number | null) => q.run(`insert into title_scores (key, source, score, checked_at) values (?, ?, ?, ?)
+const save = (key: string, src: Got, score: number | null) => q.run(`insert into title_scores (key, source, score, checked_at) values (?, ?, ?, ?)
   on conflict (key, source) do update set score = excluded.score, checked_at = excluded.checked_at`, key, src, score, Date.now());
 const num = (v: string | null | undefined) => { const n = v ? parseFloat(v) : NaN; return Number.isFinite(n) ? n : null; };
 // one title's scores from the sources asked for (a TMDB title; anime ones by Fribb's Kitsu and MyAnimeList ids)
-async function check(key: string, srcs: Src[]) {
+async function check(key: string, srcs: Got[]) {
   const [src, type, id] = key.split(':');
   if (src !== 'tmdb' || (type !== 'movie' && type !== 'tv')) { for (const s of srcs) await save(key, s, null); return; }
-  if (srcs.some((s) => OMDB.includes(s))) {
+  if (srcs.some((s) => OMDB.includes(s as Src) || s === 'awards')) {
     const imdb = (await tmdb<{ imdb_id?: string | null }>(`/${type}/${id}/external_ids`)).imdb_id;
-    const o = imdb ? await omdbFor(imdb) : null;
-    await save(key, 'imdb', num(o?.imdb)); await save(key, 'rt', num(o?.rt)); await save(key, 'mc', num(o?.mc));
+    const o = imdb && srcs.some(usesOmdb) ? await omdbFor(imdb) : null;
+    if (srcs.some((s) => OMDB.includes(s as Src))) { await save(key, 'imdb', num(o?.imdb)); await save(key, 'rt', num(o?.rt)); await save(key, 'mc', num(o?.mc)); }
+    if (srcs.includes('awards')) await save(key, 'awards', await awardBits(imdb, o?.awards));
   }
   if (srcs.includes('mal') || srcs.includes('kitsu')) {
     await loadFribb();
@@ -64,19 +76,19 @@ async function check(key: string, srcs: Src[]) {
 // same allowance), so the count moves before the worker's next round
 let warming = false;
 export function warm(pool: string[], r: ScoreRule) {
-  const floors = floorsOf(r), on = sourcesOn();
-  if (warming || !floors.length) return;
+  const need = needs(r), on = sourcesOn();
+  if (warming || !need.length) return;
   warming = true;
   void (async () => {
     try {
       const used = (await q.one<{ n: number }>("select coalesce(sum(calls), 0)::int n from api_calls where day = ? and service = 'omdb'", localDay()))!.n;
       let omdbLeft = Math.max(0, Math.floor(OMDB_DAILY * 0.7) - used);
       const have = await known(pool);
-      for (const key of pool.slice(0, 120).filter((k) => floors.some(([s]) => on[s] && have.get(k)?.[s] === undefined)).slice(0, 40)) {
-        const srcs = floors.map(([s]) => s).filter((s) => on[s] && (!OMDB.includes(s) || omdbLeft > 0));
+      for (const key of pool.slice(0, 120).filter((k) => need.some((s) => on[s] && have.get(k)?.[s] === undefined)).slice(0, 40)) {
+        const srcs = need.filter((s) => on[s] && (!usesOmdb(s) || omdbLeft > 0));
         if (!srcs.length) break;
         await check(key, srcs).catch((e) => console.error(`scores ${key}: ${e}`));
-        if (srcs.some((s) => OMDB.includes(s))) omdbLeft--;
+        if (srcs.some(usesOmdb)) omdbLeft--;
       }
     } finally { warming = false; }
   })();
@@ -84,13 +96,13 @@ export function warm(pool: string[], r: ScoreRule) {
 // the worker: the lists with floors, their candidates' unknown scores checked (OMDb up to 70% of its day's allowance, the rest
 // 120 titles a run), then those lists picked again
 export async function checkDue(reselect: (listId: string) => Promise<unknown>) {
-  const lists = await q.all<{ id: string; filters: ScoreRule }>("select id, filters from lists where kind = 'smart' and filters->'ext' is not null");
-  const work = new Map<string, Set<Src>>(), touched = new Map<string, Set<string>>();
+  const lists = await q.all<{ id: string; filters: ScoreRule }>("select id, filters from lists where kind = 'smart' and (filters->'ext' is not null or filters->'awards' is not null or filters->'awardsOut' is not null)");
+  const work = new Map<string, Set<Got>>(), touched = new Map<string, Set<string>>();
   for (const l of lists) {
-    const floors = floorsOf(l.filters), on = sourcesOn();
-    if (!floors.length) continue;
+    const need = needs(l.filters), on = sourcesOn();
+    if (!need.length) continue;
     const pool = (await q.one<{ v: { keys: string[] } }>('select v from meta where k = ?', `list-pool:${l.id}`))?.v.keys || [], have = await known(pool);
-    for (const key of pool) for (const [s] of floors) if (on[s] && have.get(key)?.[s] === undefined) {
+    for (const key of pool) for (const s of need) if (on[s] && have.get(key)?.[s] === undefined) {
       (work.get(key) || work.set(key, new Set()).get(key)!).add(s);
       (touched.get(l.id) || touched.set(l.id, new Set()).get(l.id)!).add(key);
     }
@@ -99,12 +111,12 @@ export async function checkDue(reselect: (listId: string) => Promise<unknown>) {
   const used = (await q.one<{ n: number }>("select coalesce(sum(calls), 0)::int n from api_calls where day = ? and service = 'omdb'", localDay()))!.n;
   let omdbLeft = Math.max(0, Math.floor(OMDB_DAILY * 0.7) - used), others = 120, done = 0;
   for (const [key, srcs] of work) {
-    const all = [...srcs], needsOmdb = all.some((s) => OMDB.includes(s));
-    const now = all.filter((s) => (OMDB.includes(s) ? omdbLeft > 0 : others > 0));
+    const all = [...srcs], needsOmdb = all.some(usesOmdb);
+    const now = all.filter((s) => (usesOmdb(s) ? omdbLeft > 0 : others > 0));
     if (!now.length) continue;
     try { await check(key, now); done++; } catch (e) { console.error(`scores ${key}: ${e}`); }
-    if (needsOmdb && now.some((s) => OMDB.includes(s))) omdbLeft--;
-    if (now.some((s) => !OMDB.includes(s))) others--;
+    if (needsOmdb && now.some(usesOmdb)) omdbLeft--;
+    if (now.some((s) => !usesOmdb(s))) others--;
     if (omdbLeft <= 0 && others <= 0) break;
   }
   for (const id of touched.keys()) await reselect(id).catch((e) => console.error(`list ${id}: ${e}`));

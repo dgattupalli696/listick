@@ -146,7 +146,7 @@ function Body({ s, hov }: { s: Stats; hov: Hov }) {
         </section>
         <section className="glass st-card c5">
           <div className="st-ch"><h2>Watched again</h2></div>
-          {s.again.length ? <List items={s.again} unit="times" /> : <p className="st-note">No film watched twice in this period.</p>}
+          {s.again.length ? <List items={s.again} unit="times" /> : <p className="st-note">No movie watched twice in this period.</p>}
         </section>
       </div>
     </>

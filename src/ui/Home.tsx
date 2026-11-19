@@ -163,7 +163,7 @@ export function Home({ view, kind }: { view: (body: ReactNode) => ReactNode; kin
           {/* the Anime page picks series or films */}
           {kind === 'anime' && <>
             <span className="pk-sep" />
-            <div className="pk-set" id="grp-form" role="group" aria-label="Series or films">
+            <div className="pk-set" id="grp-form" role="group" aria-label="Series or movies">
               {([['anime', 'Series', PICK_ICON.tv], ['anime-movie', 'Movies', PICK_ICON.movie]] as const).map(([v, label, face]) => (
                 <PkBtn key={v} label={label} data={{ form: v }} face={face} on={pk.gkind === v} pressed={pk.gkind === v} onClick={() => void pick('group', { gkind: v })} />
               ))}
@@ -186,7 +186,7 @@ export function Home({ view, kind }: { view: (body: ReactNode) => ReactNode; kin
           {/* the Anime page picks series or films here too */}
           {kind === 'anime' && <>
             <span className="pk-sep" />
-            <div className="pk-set" id="svc-form" role="group" aria-label="Series or films">
+            <div className="pk-set" id="svc-form" role="group" aria-label="Series or movies">
               {([['anime', 'Series', PICK_ICON.tv], ['anime-movie', 'Movies', PICK_ICON.movie]] as const).map(([v, label, face]) => (
                 <PkBtn key={v} label={label} data={{ form: v }} face={face} on={pk.skind === v} pressed={pk.skind === v} onClick={() => void pick('service', { skind: v })} />
               ))}

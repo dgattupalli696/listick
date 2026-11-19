@@ -183,14 +183,17 @@ async function comingMovies() {
 }
 const day = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
 const ON_STREAMING = `watch_region=US&with_watch_providers=${STREAMING.US.join('|')}&with_watch_monetization_types=flatrate`;
-// box office: this region's cinema releases of the last ~10 weeks by what they've taken (TMDB's revenue), highest first; 20+
-// votes, as small films' revenue is often missing or stray
-const boxOffice = () => tmdbPages('movie', `/discover/movie?region=${ROW_REGION}&with_release_type=3&primary_release_date.gte=${day(-75)}&primary_release_date.lte=${day(0)}&sort_by=revenue.desc&vote_count.gte=20`, 2);
-// new on streaming: films whose digital release here was in the last 45 days; the most popular 60, newest digital release first
-async function newOnStreaming() {
-  const list = await tmdbPages('movie', `/discover/movie?region=${ROW_REGION}&with_release_type=4&release_date.gte=${day(-45)}&release_date.lte=${day(0)}&sort_by=popularity.desc&vote_count.gte=10`, 3, notAnime);
+// new to rent or buy: digital releases of the last 45 days to rent or buy, newest first
+async function newToRent() {
+  const list = await tmdbPages('movie', `/discover/movie?region=${ROW_REGION}&with_release_type=4&release_date.gte=${day(-45)}&release_date.lte=${day(0)}&watch_region=${ROW_REGION}&with_watch_monetization_types=rent|buy&sort_by=popularity.desc&vote_count.gte=10`, 3, notAnime);
   const at = await homeReleases(ROW_REGION, ['digital'], 45, false);
   return list.sort((a, b) => (at.get(b.key) ?? 0) - (at.get(a.key) ?? 0));
+}
+// new on streaming: films come to the big services in the last 45 days, newest first
+async function newOnStreaming() {
+  const at = await homeReleases(ROW_REGION, ['streaming'], 45, false, new URLSearchParams({ with_watch_providers: STREAMING.US.join('|') }));
+  const keys = [...at].sort((a, b) => b[1] - a[1]).map(([k]) => k), ts = await titlesOf(keys);
+  return keys.map((k) => ts.get(k)).filter((t): t is Title => !!t && !t.anime).slice(0, 60);
 }
 // new shows: first aired in the last 60 days, on the streaming services; the most popular 60, newest premiere first
 const hasPoster = (x: TmdbItem) => !!x.poster_path;
@@ -249,7 +252,7 @@ type Row = { id: string; title: string; page: number; job: () => Promise<Title[]
 export const ROWS: Row[] = [
   { id: 'theaters', title: 'In theaters', page: 20, job: () => tmdbPages('movie', `/movie/now_playing?region=${ROW_REGION}`) },
   // the Movies, TV and Anime pages' own rows, in their order there
-  { id: 'movie-box-office', title: 'Box office', page: 20, job: boxOffice },
+  { id: 'movie-rent-new', title: 'New to rent or buy', page: 20, job: newToRent },
   { id: 'movie-streaming-new', title: 'New on streaming', page: 20, job: newOnStreaming },
   { id: 'movie-coming', title: 'Coming soon', page: 20, job: comingMovies },
   { id: 'tv-new-episodes', title: 'New episodes this week', page: 20, job: newEpisodes },

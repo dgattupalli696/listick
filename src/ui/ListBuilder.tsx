@@ -7,26 +7,31 @@ import { getJ, postJ } from './lib/api';
 import { say } from './lib/format';
 import { Icon, PATHS } from './lib/icons';
 import { guessCountry, type Country, type Prefs, type RegionInfo } from './lib/region';
-import { ServiceGrid } from './Region';
 import { SearchPick, type Picked } from './SearchPick';
 import { Slider } from './Slider';
 
 export type Media = 'movie' | 'tv' | 'anime' | 'animefilm' | 'both';
 export type Filters = {
-  sort?: 'popular' | 'rating' | 'newest' | 'oldest' | 'az' | 'box' | 'votes' | 'shuffle' | 'release' | 'releaseOld'; max?: number; refresh?: 'daily' | 'weekly' | 'never'; row?: boolean;
-  home?: ('uhd' | 'bluray' | 'digital' | 'streaming')[]; homeWithin?: number; homeCinema?: boolean;
+  sort?: 'popular' | 'rating' | 'newest' | 'oldest' | 'az' | 'box' | 'votes' | 'shuffle' | 'release' | 'releaseOld'; max?: number; refresh?: '6h' | '12h' | 'daily' | 'weekly' | 'never'; row?: boolean;
+  home?: ('uhd' | 'bluray' | 'digital' | 'streaming')[]; homeWithin?: number; homeCinema?: boolean; airing?: ('new' | 'returning')[];
   genres?: string[]; without?: string[]; match?: 'any' | 'all';
   when?: 'any' | '30d' | '6m' | 'year' | 'next3' | 'years'; yearFrom?: number; yearTo?: number; decades?: number[];
   runtimeFrom?: number; runtimeTo?: number; released?: 'out' | 'coming' | 'both'; cert?: string; out?: ('cinema' | 'digital' | 'disc' | 'tv')[]; status?: number[]; type?: number[];
   scoreFrom?: number; scoreTo?: number; votes?: number; votesTo?: number; region?: string; reach?: 'released' | 'streaming' | 'anywhere'; services?: (number | string)[]; my?: boolean;
-  how?: 'flatrate' | 'free' | 'rent'; tvdbGenre?: number;
-  language?: string; country?: string; languages?: string[]; countries?: string[];
+  watch?: Watch[]; tvdbGenre?: number; servicesOut?: number[];
+  language?: string; country?: string; languages?: string[]; countries?: string[]; languagesOut?: string[]; countriesOut?: string[];
   mood?: string; keywords?: Picked[]; cast?: Picked[]; castMatch?: 'any' | 'all'; crew?: Picked[]; companies?: Picked[]; networks?: number[];
   hideWatched?: boolean; hidePlan?: boolean; onlyRated?: boolean; myFrom?: number; myTo?: number; watched?: 'year' | 'old' | 'started';
   // other sources' floors (checked title by title, scores.ts), all or any of them, and a source with no score: out or kept
   ext?: Partial<Record<Src, number>>; meet?: 'all' | 'any'; missing?: 'out' | 'keep';
+  awards?: string[]; awardsOut?: string[];   // '<award>-won' | '<award>-nom'
 };
 export type Src = 'imdb' | 'rt' | 'mc' | 'mal' | 'kitsu';
+const AWARDS: [string, string][] = [['oscar-won', 'Oscar winner'], ['oscar-nom', 'Oscar nominee'], ['emmy-won', 'Emmy winner'], ['emmy-nom', 'Emmy nominee'],
+  ['globe-won', 'Golden Globe winner'], ['globe-nom', 'Golden Globe nominee'], ['bafta-won', 'BAFTA winner'], ['bafta-nom', 'BAFTA nominee'],
+  ['cannes-won', 'Palme d’Or winner'], ['cannes-nom', 'In competition at Cannes'], ['any-won', 'Won any award'], ['any-nom', 'Nominated for any award']];
+type Watch = 'flatrate' | 'free' | 'ads' | 'rent' | 'buy';
+const WATCH: [Watch, string][] = [['flatrate', 'Subscription'], ['free', 'Free'], ['ads', 'Free with ads'], ['rent', 'Rent'], ['buy', 'Buy']];
 export type Draft = { id?: string; name: string; description: string; media: Media; filters: Filters; shared?: boolean };
 
 export const KIND: Record<Media, [string, string]> = { movie: ['Movies', PATHS.movie], tv: ['Shows', PATHS.tv], anime: ['Anime series', PATHS.anime],
@@ -59,13 +64,46 @@ const GROUPS = [['basics', 'Basics', 'M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v
 type Group = (typeof GROUPS)[number][0];
 const GROUP_ICON = Object.fromEntries(GROUPS.map(([k, , ic]) => [k, ic])) as Record<Group, string>;
 // library and Latest releases lists
-const libraryOnly = (f: Filters) => !!(f.home?.length || f.myFrom || f.myTo || f.watched);
+const libraryOnly = (f: Filters) => !!(f.home?.length || f.airing?.length || f.myFrom || f.myTo || f.watched);
 // the last Latest releases circle off takes its settings and its own orders with it
 const homePatch = (f: Filters, home: NonNullable<Filters['home']>): Partial<Filters> => (home.length ? { home }
   : { home: undefined, homeWithin: undefined, homeCinema: undefined, ...(f.sort === 'release' || f.sort === 'releaseOld' ? { sort: undefined } : {}) });
+const airingPatch = (f: Filters, airing: NonNullable<Filters['airing']>): Partial<Filters> => (airing.length ? { airing }
+  : { airing: undefined, homeWithin: undefined, ...(f.sort === 'release' || f.sort === 'releaseOld' ? { sort: undefined } : {}) });
 const names = (type: 'language' | 'region') => { try { return new Intl.DisplayNames(['en'], { type }); } catch { return null; } };
 const LANG = names('language'), LAND = names('region');
 const langName = (l: string) => LANG?.of(l) || l, landName = (c: string) => LAND?.of(c) || c;
+const some = <T,>(a: T[]) => (a.length ? a : undefined);
+// a country's services, one each: add-on channels left out, plans merged
+const ADDON = /(amazon|apple tv|roku premium) channel$/i, PLAN = /\s+(standard with ads|with ads|premium plus|premium|essential|basic|kids|free|store)$/i;
+function servicesOf(list: { id: number; name: string }[]) {
+  const by = new Map<string, { name: string; ids: number[] }>();
+  for (const x of list) {
+    if (ADDON.test(x.name)) continue;
+    const name = x.name.replace(PLAN, '').replace(PLAN, '').replace(/\s+Plus$/, '+'), g = by.get(name.toLowerCase());
+    if (g) g.ids.push(x.id); else by.set(name.toLowerCase(), { name, ids: [x.id] });
+  }
+  return [...by.values()];
+}
+// Include and Exclude dropdowns
+function InOut<T extends string | number>({ label, opts, ins, outs, set, search }: { label: string; opts: [T, string][]; ins: T[]; outs: T[]; set: (ins: T[], outs: T[]) => void; search?: boolean }) {
+  return (
+    <div className="b-sec"><span className="dd-l">{label}</span><div className="b-dds">
+      <Drop label="Include" multi search={search} empty="Any" opts={opts} value={ins} set={(v) => set(v, outs.filter((x) => !v.includes(x)))} />
+      <Drop label="Exclude" multi search={search} empty="None" opts={opts} value={outs} set={(v) => set(ins.filter((x) => !v.includes(x)), v)} />
+    </div></div>
+  );
+}
+// Include and Exclude searches (keywords, people, studios)
+function InOutSearch({ kind, label, value, set }: { kind: 'keyword' | 'person' | 'company'; label: string; value: Picked[]; set: (v: Picked[] | undefined) => void }) {
+  const ins = value.filter((x) => !x.out), outs = value.filter((x) => x.out), not = (l: Picked[]) => (x: Picked) => !l.some((y) => y.id === x.id);
+  return (
+    <div className="b-sec"><span className="dd-l">{label}</span><div className="b-dds">
+      <SearchPick kind={kind} label="Include" value={ins} set={(v) => set(some([...v.map((x) => ({ ...x, out: undefined })), ...outs.filter(not(v))]))} />
+      <SearchPick kind={kind} label="Exclude" value={outs} set={(v) => set(some([...ins.filter(not(v)), ...v.map((x) => ({ ...x, out: true }))]))} />
+    </div></div>
+  );
+}
 const ORDER_NAME: Record<NonNullable<Filters['sort']>, string> = { popular: 'Popular first', rating: 'Top rated first', newest: 'Newest first', oldest: 'Oldest first',
   az: 'A–Z', box: 'Box office first', votes: 'Most voted first', shuffle: 'Shuffled', release: 'Newest release first', releaseOld: 'Oldest release first' };
 type Desc = [Group, string, Partial<Filters> | null, boolean?];
@@ -76,7 +114,8 @@ function describe(media: Media, f: Filters, n: { svc?: (id: number | string) => 
   const when = f.when || (f.yearFrom || f.yearTo ? 'years' : 'any'), picked = (f.services || []).filter((x): x is number => typeof x === 'number');
   const langs = f.languages?.length ? f.languages : f.language ? [f.language] : [], lands = f.countries?.length ? f.countries : f.country ? [f.country] : [];
   const D = (g: Group, t: string, patch: Partial<Filters> | null, no?: boolean): Desc => [g, t, patch, no];
-  const lib = libraryOnly(f), svcs = !lib || !!f.home?.includes('streaming');
+  const names = (v: number[]) => [...new Set(v.map((id) => n.svc!(id)))];
+  const lib = libraryOnly(f), home = !!(f.home?.length || f.airing?.length), svcs = !lib || home;
   const ext = (k: Src): Partial<Filters> => { const e = { ...f.ext, [k]: undefined }; return { ext: Object.values(e).some(Boolean) ? e : undefined }; };
   return [
     D('basics', KIND[media][0], null),
@@ -84,14 +123,15 @@ function describe(media: Media, f: Filters, n: { svc?: (id: number | string) => 
     ...(!lib && f.reach && f.reach !== 'anywhere' ? [D('basics', f.reach === 'streaming' ? 'On its services' : films ? 'Released there' : 'Made there', { reach: undefined })] : []),
     ...(f.row ? [D('basics', 'On Home', { row: undefined })] : []),
     ...(f.home || []).map((x) => D('basics', `Latest: ${label(HOME.map(([v, nm]) => [v, nm] as [string, string]), x)}`, homePatch(f, f.home!.filter((y) => y !== x)))),
-    ...(f.home?.length ? [D('basics', `Last ${label(WITHIN, f.homeWithin || 90)}`, f.homeWithin ? { homeWithin: undefined } : null)] : []),
+    ...(f.airing || []).map((x) => D('basics', `Latest: ${label(AIRING.map(([v, nm]) => [v, nm] as [string, string]), x)}`, airingPatch(f, f.airing!.filter((y) => y !== x)))),
+    ...(home ? [D('basics', `Last ${label(WITHIN, f.homeWithin || 90)}`, f.homeWithin ? { homeWithin: undefined } : null)] : []),
     ...(f.home?.length && f.homeCinema ? [D('basics', 'From cinemas', { homeCinema: undefined })] : []),
-    ...(!lib && f.mood ? [D('genres', label(MOODS.map(([v, nm]) => [v, nm] as [string, string]), f.mood), { mood: undefined })] : []),
+    ...(f.mood ? [D('basics', label(MOODS.map(([v, nm]) => [v, nm] as [string, string]), f.mood), { mood: undefined })] : []),
     ...(media === 'tv' && f.tvdbGenre ? [D('genres', `${label(TVDB_CATS, f.tvdbGenre)} · TheTVDB`, { tvdbGenre: undefined })] : []),
     ...(f.genres || []).map((g) => D('genres', g, { genres: f.genres!.filter((x) => x !== g) })),
     ...(f.without || []).map((g) => D('genres', g, { without: f.without!.filter((x) => x !== g) }, true)),
     ...(f.match === 'all' && (f.genres || []).length > 1 ? [D('genres', 'All genres', { match: undefined })] : []),
-    ...(lib ? [] : f.keywords || []).map((k) => D('genres', k.name, { keywords: f.keywords!.filter((x) => x.id !== k.id) }, k.out)),
+    ...(f.keywords || []).map((k) => D('genres', k.name, { keywords: f.keywords!.filter((x) => x.id !== k.id) }, k.out)),
     ...(when === 'years' && (f.yearFrom || f.yearTo) ? [D('release', `${f.yearFrom || '…'}–${f.yearTo || '…'}`, { when: undefined, yearFrom: undefined, yearTo: undefined })] : []),
     ...(when !== 'any' && when !== 'years' ? [D('release', label(WHEN, when), { when: undefined })] : []),
     ...(f.decades || []).map((x) => D('release', label(DECADES, x), { decades: f.decades!.filter((y) => y !== x) })),
@@ -100,20 +140,25 @@ function describe(media: Media, f: Filters, n: { svc?: (id: number | string) => 
     ...(shows && !lib ? (f.type || []).map((x) => D('release', label(TV_TYPE, x), { type: f.type!.filter((y) => y !== x) })) : []),
     ...(!lib && f.released && f.released !== 'both' ? [D('release', f.released === 'out' ? 'Out now' : 'Coming', { released: undefined })] : []),
     ...(f.runtimeFrom || f.runtimeTo ? [D('release', range(f.runtimeFrom, f.runtimeTo, ' min'), { runtimeFrom: undefined, runtimeTo: undefined })] : []),
-    ...(films && !lib && f.cert ? [D('release', `Up to ${f.cert}`, { cert: undefined })] : []),
+    ...(films && (!lib || home) && f.cert ? [D('release', `Up to ${f.cert}`, { cert: undefined })] : []),
     ...(f.scoreFrom || f.scoreTo ? [D('scores', `TMDB ${range(f.scoreFrom, f.scoreTo)}`, { scoreFrom: undefined, scoreTo: undefined })] : []),
-    ...(!lib && (f.votes || f.votesTo) ? [D('scores', `${f.votes && f.votesTo ? `${votesText(f.votes)}–${votesText(f.votesTo)}` : f.votes ? `${votesText(f.votes)}+` : `up to ${votesText(f.votesTo!)}`} votes`,
+    ...(f.votes || f.votesTo ? [D('scores', `${f.votes && f.votesTo ? `${votesText(f.votes)}–${votesText(f.votesTo)}` : f.votes ? `${votesText(f.votes)}+` : `up to ${votesText(f.votesTo!)}`} votes`,
       { votes: undefined, votesTo: undefined })] : []),
     ...SOURCES.filter(([k]) => f.ext?.[k]).map(([k, nm, , unit]) => D('scores', `${nm} ${f.ext![k]}${unit}+`, ext(k))),
-    ...(!svcs ? [] : f.my ? [D('streaming', 'My services', { my: undefined })] : n.svc ? picked.map((id) => D('streaming', n.svc!(id), { services: picked.filter((x) => x !== id) }))
+    ...(f.awards || []).map((a) => D('scores', label(AWARDS, a), { awards: some(f.awards!.filter((x) => x !== a)) })),
+    ...(f.awardsOut || []).map((a) => D('scores', label(AWARDS, a), { awardsOut: some(f.awardsOut!.filter((x) => x !== a)) }, true)),
+    ...(!svcs ? [] : f.my ? [D('streaming', 'My services', { my: undefined })] : n.svc ? names(picked).map((nm) => D('streaming', nm, { services: picked.filter((x) => n.svc!(x) !== nm) }))
       : picked.length ? [D('streaming', `${picked.length} service${picked.length > 1 ? 's' : ''}`, null)] : []),
-    ...(!lib && f.how && f.how !== 'flatrate' ? [D('streaming', f.how === 'free' ? 'Free' : 'Rent or buy', { how: undefined })] : []),
-    ...(shows && !lib ? (f.networks || []).map((x) => D('streaming', label(NETWORKS, x), { networks: f.networks!.filter((y) => y !== x) })) : []),
-    ...(lib ? [] : langs).map((l) => D('language', n.lang(l), { language: undefined, languages: langs.filter((x) => x !== l) })),
-    ...(lib ? [] : lands).map((c) => D('language', `Made in ${n.land(c)}`, { country: undefined, countries: lands.filter((x) => x !== c) })),
-    ...(films && !lib ? (f.cast || []).map((k) => D('people', k.name, { cast: f.cast!.filter((x) => x.id !== k.id) })) : []),
-    ...(films && !lib ? (f.crew || []).map((k) => D('people', k.name, { crew: f.crew!.filter((x) => x.id !== k.id) })) : []),
-    ...(lib ? [] : f.companies || []).map((k) => D('people', k.name, { companies: f.companies!.filter((x) => x.id !== k.id) }, k.out)),
+    ...(svcs && n.svc ? names(f.servicesOut || []).map((nm) => D('streaming', nm, { servicesOut: some(f.servicesOut!.filter((x) => n.svc!(x) !== nm)) }, true)) : []),
+    ...(svcs ? (f.watch || []).map((w) => D('streaming', label(WATCH, w), { watch: some(f.watch!.filter((x) => x !== w)) })) : []),
+    ...(shows ? (f.networks || []).map((x) => D('people', label(NETWORKS, x), { networks: f.networks!.filter((y) => y !== x) })) : []),
+    ...langs.map((l) => D('language', n.lang(l), { language: undefined, languages: langs.filter((x) => x !== l) })),
+    ...(f.languagesOut || []).map((l) => D('language', n.lang(l), { languagesOut: f.languagesOut!.filter((x) => x !== l) }, true)),
+    ...lands.map((c) => D('language', `Made in ${n.land(c)}`, { country: undefined, countries: lands.filter((x) => x !== c) })),
+    ...(f.countriesOut || []).map((c) => D('language', `Made in ${n.land(c)}`, { countriesOut: f.countriesOut!.filter((x) => x !== c) }, true)),
+    ...(films ? (f.cast || []).map((k) => D('people', k.name, { cast: f.cast!.filter((x) => x.id !== k.id) }, k.out)) : []),
+    ...(films ? (f.crew || []).map((k) => D('people', k.name, { crew: f.crew!.filter((x) => x.id !== k.id) }, k.out)) : []),
+    ...(f.companies || []).map((k) => D('people', k.name, { companies: f.companies!.filter((x) => x.id !== k.id) }, k.out)),
     ...(f.hideWatched ? [D('library', 'Hide watched', { hideWatched: undefined })] : []),
     ...(f.hidePlan ? [D('library', 'Hide Plan to watch', { hidePlan: undefined })] : []),
     ...(f.onlyRated ? [D('library', 'Only rated', { onlyRated: undefined })] : []),
@@ -126,13 +171,14 @@ export const Sw = ({ on, set, label }: { on: boolean; set: (x: boolean) => void;
 const SwitchRow = ({ label, on, set }: { label: string; on: boolean; set: (x: boolean) => void }) => <div className="b-line"><span>{label}</span><Sw on={on} set={set} label={label} /></div>;
 const YEARS: [number, string][] = Array.from({ length: year + 3 - 1900 }, (_, i) => year + 2 - i).map((y) => [y, String(y)]);
 const WHEN: [NonNullable<Filters['when']>, string][] = [['any', 'Any time'], ['30d', 'Last 30 days'], ['6m', 'Last 6 months'], ['year', 'This year'], ['next3', 'Next 3 months'], ['years', 'Pick years']];
-// Latest releases: out lately on digital (TMDB), of those streaming now (on the Streaming group's services, else any), or on a
-// 4K disc or a Blu-ray (blu-ray.com); movies and anime movies only, each a circle under Basics' Kind
+// Latest releases: rent or buy, subscription, 4K disc, Blu-ray (movies and anime movies)
 const DISC = 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM12 10a2 2 0 1 0 0 4a2 2 0 1 0 0-4z';
-const HOME: ['uhd' | 'bluray' | 'digital' | 'streaming', string, string | ReactNode][] = [['digital', 'Digital', 'M12 4v11M7 10l5 5 5-5M5 20h14'],
-  ['streaming', 'Streaming', 'M4 6h16v10H4zM8 20h8M12 16v4M10 8.5v5l4-2.5z'], ['uhd', '4K disc', <b key="4k" className="pk-4k">4K</b>], ['bluray', 'Blu-ray', DISC]];
+// Latest shows: new, returning
+const AIRING: ['new' | 'returning', string, string][] = [['new', 'New shows', 'M12 5v14M5 12h14'], ['returning', 'Returning', 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7']];
+const HOME: ['uhd' | 'bluray' | 'digital' | 'streaming', string, string | ReactNode][] = [['digital', 'Rent or buy', 'M12 4v11M7 10l5 5 5-5M5 20h14'],
+  ['streaming', 'Subscription', 'M4 6h16v10H4zM8 20h8M12 16v4M10 8.5v5l4-2.5z'], ['uhd', '4K disc', <b key="4k" className="pk-4k">4K</b>], ['bluray', 'Blu-ray', DISC]];
 const HOME_ORDER: [NonNullable<Filters['sort']>, string][] = [['release', 'Newest release'], ['releaseOld', 'Oldest release'], ['rating', 'Rating'], ['az', 'A–Z'],
-  ['newest', 'Newest film'], ['oldest', 'Oldest film'], ['shuffle', 'Shuffle']];
+  ['newest', 'Newest movie'], ['oldest', 'Oldest movie'], ['shuffle', 'Shuffle']];
 const WITHIN: [number, string][] = [[30, '30 days'], [90, '3 months'], [180, '6 months'], [365, 'Year']];
 const DECADES: [number, string][] = [[1950, '50s'], [1960, '60s'], [1970, '70s'], [1980, '80s'], [1990, '90s'], [2000, '2000s'], [2010, '2010s'], [2020, '2020s']];
 const OUT: [NonNullable<Filters['out']>[number], string][] = [['cinema', 'In cinemas'], ['digital', 'On digital'], ['disc', 'On disc'], ['tv', 'On TV']];
@@ -189,9 +235,9 @@ const range = (a: number | undefined, b: number | undefined, unit = '') => (a &&
 
 export function Builder({ draft, page, close, saved }: { draft: Draft; page: { genres: Record<Media, string[]> }; close: () => void; saved: (id: string) => Promise<void> }) {
   const [d, setD] = useState(draft), [g, setG] = useState<Group>('basics'), [busy, setBusy] = useState(false), [e, setE] = useState('');
-  const [prev, setPrev] = useState<{ total: number; count: number; pending: number; pool: number; posters: { key: string; title: string; poster: string | null }[] } | null>(null), [loading, setLoading] = useState(false);
+  const [prev, setPrev] = useState<{ total: number; count: number; pending: number; pool: number; posters: { key: string; title: string; poster: string | null; day: number | null }[] } | null>(null), [loading, setLoading] = useState(false);
   const [prefs, setPrefs] = useState<Prefs | null>(null), [got, setGot] = useState<{ cc: string; r: RegionInfo } | null>(null);
-  const [seeing, setSeeing] = useState(false);
+  const [seeing, setSeeing] = useState(false), [full, setFull] = useState(false);
   const [keys, setKeys] = useState<{ mal: boolean; omdb: boolean; tvdb?: boolean } | null>(null), [opts, setOpts] = useState<{ languages: Country[]; countries: Country[] } | null>(null);
   useEffect(() => { let live = true; getJ<{ languages: Country[]; countries: Country[] }>('/api/lists/options').then((o) => { if (live) setOpts(o); }, () => {}); return () => { live = false; }; }, []);
   useEffect(() => { let live = true; getJ<{ sources: { mal: boolean; omdb: boolean; tvdb?: boolean } }>('/api/config').then((c) => { if (live) setKeys(c.sources); }, () => {}); return () => { live = false; }; }, []);
@@ -225,16 +271,21 @@ export function Builder({ draft, page, close, saved }: { draft: Draft; page: { g
   };
 
   const films = d.media === 'movie' || d.media === 'animefilm' || d.media === 'both', shows = d.media === 'tv' || d.media === 'anime' || d.media === 'both', cname = (c?: string) => prefs?.countries.find((x) => x.id === c)?.name || c || '';
-  const svcName = (id: number | string) => reg?.services.find((s) => s.id === id)?.name || String(id);
+  const svcs = reg ? servicesOf(reg.services) : [], svcName = (id: number | string) => svcs.find((x) => x.ids.includes(id as number))?.name || String(id);
+  // services: a name's ids, ids' names
+  const ids = (v: number[]) => svcs.filter((x) => v.includes(x.ids[0])).flatMap((x) => x.ids), firsts = (v: number[]) => svcs.filter((x) => x.ids.some((id) => v.includes(id))).map((x) => x.ids[0]);
+  const country = prefs && <Drop label="Country" search opts={prefs.countries.map((c) => [c.id, c.name])} value={region || ''}
+    set={(c) => setF({ region: c, cert: undefined, my: c === yours ? f.my : undefined, services: [], servicesOut: undefined })} />;
   const picked = (f.services || []).filter((x): x is number => typeof x === 'number');
   const mineHere = !!prefs && region === yours && prefs.services.length > 0;
   const when = f.when || (f.yearFrom || f.yearTo ? 'years' : 'any');
   const setExt = (k: Src, v: number | undefined) => { const ext = { ...f.ext, [k]: v || undefined }; setF({ ext: Object.values(ext).some(Boolean) ? ext : undefined }); };
-  const floors = SOURCES.filter(([k]) => f.ext?.[k]).length;
-  const lib = libraryOnly(f), groups = GROUPS.filter(([k]) => !lib || (k !== 'language' && k !== 'people' && (k !== 'streaming' || !!f.home?.includes('streaming'))));
+  // checked per title: other sources' floors, awards
+  const floors = SOURCES.filter(([k]) => f.ext?.[k]).length, checked = floors + (f.awards?.length || f.awardsOut?.length ? 1 : 0);
+  const lib = libraryOnly(f), home = !!(f.home?.length || f.airing?.length), groups = GROUPS.filter(([k]) => !lib || k !== 'streaming' || home);
   const at = groups.some(([k]) => k === g) ? g : 'basics';
   // how many go in (scores picking: how many have passed so far, of the candidates checked)
-  const said = loading ? 'Looking…' : !prev ? 'No preview' : floors > 0 ? `${prev.count} of ${prev.pool} pass` : `${prev.count} ${prev.count === 1 ? 'title' : 'titles'}`;
+  const said = loading ? 'Looking…' : !prev ? 'No preview' : checked > 0 ? `${prev.count} of ${prev.pool} pass` : `${prev.count} ${prev.count === 1 ? 'title' : 'titles'}`;
   const langs = f.languages?.length ? f.languages : f.language ? [f.language] : [], lands = f.countries?.length ? f.countries : f.country ? [f.country] : [];
   // cast and crew are films' (TMDB's show search ignores them); a mood fills genres and keywords
   const people = d.media === 'movie' || d.media === 'animefilm' || d.media === 'both';
@@ -253,7 +304,8 @@ export function Builder({ draft, page, close, saved }: { draft: Draft; page: { g
   // a new kind starts its genres over (anime series and movies share theirs); Latest releases are movies' and anime movies' only
   const setKind = (m: Media) => setD({ ...d, media: m, filters: { ...f, ...(anime && (m === 'anime' || m === 'animefilm') ? {} : { genres: [], without: [] }), cert: undefined,
     sort: f.sort === 'box' && m === 'tv' ? undefined : f.sort,
-    ...(m !== 'movie' && m !== 'animefilm' ? { home: undefined, homeWithin: undefined, homeCinema: undefined, ...(f.sort === 'release' || f.sort === 'releaseOld' ? { sort: undefined } : {}) } : {}) } });
+    ...(m !== 'movie' && m !== 'animefilm' ? { home: undefined, homeCinema: undefined } : {}), ...(m !== 'tv' && m !== 'anime' ? { airing: undefined } : {}),
+    ...((m === 'movie' || m === 'animefilm' ? !f.home?.length : m === 'tv' || m === 'anime' ? !f.airing?.length : true) ? { homeWithin: undefined, ...(f.sort === 'release' || f.sort === 'releaseOld' ? { sort: undefined } : {}) } : {}) } });
   const setHome = (home: NonNullable<Filters['home']>) => setF(homePatch(f, home));
   // Movies' Latest releases: any circle on makes the list the latest digital / streaming / 4K / Blu-ray releases instead of TMDB's search
   const latest = <>
@@ -264,7 +316,17 @@ export function Builder({ draft, page, close, saved }: { draft: Draft; page: { g
       <Drop label="Released in the last" opts={WITHIN} value={f.homeWithin || 90} set={(d) => setF({ homeWithin: d === 90 ? undefined : d })} />
       <Drop label="Order" opts={HOME_ORDER} value={f.sort && HOME_ORDER.some(([v]) => v === f.sort) ? f.sort : 'release'} set={(sort) => setF({ sort: sort === 'release' ? undefined : sort })} />
     </div>}
-    {!!f.home?.length && <div className="b-lines"><SwitchRow label="Only films from cinemas" on={!!f.homeCinema} set={(on) => setF({ homeCinema: on || undefined })} /></div>}
+    {!!f.home?.length && <div className="b-lines"><SwitchRow label="Only movies from cinemas" on={!!f.homeCinema} set={(on) => setF({ homeCinema: on || undefined })} /></div>}
+    </>;
+  // Latest shows
+  const latestShows = <>
+    <div className="b-sec"><span className="dd-l">New on TV lately</span><div className="pk-set">{AIRING.map(([v, n, face]) => {
+      const on = !!f.airing?.includes(v);
+      return <PkBtn key={v} label={n} data={{}} face={face} on={on} pressed={on} onClick={() => setF(airingPatch(f, on ? f.airing!.filter((y) => y !== v) : [...(f.airing || []), v]))} />; })}</div></div>
+    {!!f.airing?.length && <div className="b-dds">
+      <Drop label="Started in the last" opts={WITHIN} value={f.homeWithin || 90} set={(x) => setF({ homeWithin: x === 90 ? undefined : x })} />
+      <Drop label="Order" opts={HOME_ORDER} value={f.sort && HOME_ORDER.some(([v]) => v === f.sort) ? f.sort : 'release'} set={(sort) => setF({ sort: sort === 'release' ? undefined : sort })} />
+    </div>}
     </>;
 
   const pane: Record<Group, ReactNode> = {
@@ -276,13 +338,14 @@ export function Builder({ draft, page, close, saved }: { draft: Draft; page: { g
       {anime && <div className="b-sec"><span className="dd-l">Anime</span><div className="pk-set">{([['anime', 'Shows', PATHS.tv], ['animefilm', 'Movies', PATHS.movie]] as const).map(([m, n, face]) =>
         <PkBtn key={m} label={n} data={{}} face={face} on={d.media === m} pressed={d.media === m} onClick={() => setKind(m)} />)}</div></div>}
       {(d.media === 'movie' || d.media === 'animefilm') && latest}
+      {(d.media === 'tv' || d.media === 'anime') && latestShows}
       <div className="b-dds">
-        {!f.home?.length && <Drop label="Order" opts={[['popular', 'Popular'], ['rating', 'Rating'], ['newest', 'Newest'], ['oldest', 'Oldest'], ['az', 'A–Z'], ...(films && !lib ? [['box', 'Box office'] as ['box', string]] : []),
+        {!home && <Drop label="Order" opts={[['popular', 'Popular'], ['rating', 'Rating'], ['newest', 'Newest'], ['oldest', 'Oldest'], ['az', 'A–Z'], ...(films && !lib ? [['box', 'Box office'] as ['box', string]] : []),
           ...(lib ? [] : [['votes', 'Most voted'] as ['votes', string]]), ['shuffle', 'Shuffle']]} value={f.sort || 'popular'} set={(sort) => setF({ sort })} />}
         <Drop label="How many" opts={[[20, '20'], [40, '40'], [60, '60'], [100, '100'], [200, '200'], [250, '250'], [500, '500']]} value={f.max || 60} set={(max) => setF({ max })} />
-        <Drop label="Refresh" opts={[['daily', 'Daily'], ['weekly', 'Weekly'], ['never', 'Never']]} value={f.refresh || 'daily'} set={(refresh) => setF({ refresh })} />
-        {prefs && <Drop label="Country" search opts={prefs.countries.map((c) => [c.id, c.name])} value={region || ''}
-          set={(c) => setF({ region: c, cert: undefined, my: c === yours ? f.my : undefined, services: [] })} />}
+        <Drop label="Refresh" opts={[['6h', 'Every 6 hours'], ['12h', 'Every 12 hours'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['never', 'Never']]} value={f.refresh || 'daily'} set={(refresh) => setF({ refresh })} />
+        <Drop label="Mood" opts={[['', 'None'], ...MOODS.map(([v, n]): [string, string] => [v, n])]} value={f.mood || ''} set={mood} />
+        {country}
         {!lib && <Drop label="Titles from" opts={[['anywhere', 'Anywhere'], ['released', films ? 'Released there' : 'Made there'], ['streaming', 'On its services']]} value={f.reach || 'anywhere'}
           set={(reach) => setF({ reach: reach === 'anywhere' ? undefined : reach })} />}
       </div>
@@ -291,16 +354,12 @@ export function Builder({ draft, page, close, saved }: { draft: Draft; page: { g
       </div>
     </>,
     genres: <>
+      <InOut label="Genres" opts={page.genres[d.media].map((n): [string, string] => [n, n])} ins={f.genres || []} outs={f.without || []} set={(genres, without) => setF({ genres, without })} />
       <div className="b-dds">
-        {!lib && <Drop label="Mood" opts={[['', 'None'], ...MOODS.map(([v, n]): [string, string] => [v, n])]} value={f.mood || ''} set={mood} />}
-        <Drop label="Genres" multi search opts={page.genres[d.media].map((n): [string, string] => [n, n])} value={f.genres || []}
-          set={(genres) => setF({ genres, without: (f.without || []).filter((x) => !genres.includes(x)) })} />
-        <Drop label="Leave out" multi search opts={page.genres[d.media].map((n): [string, string] => [n, n])} value={f.without || []} empty="None"
-          set={(without) => setF({ without, genres: (f.genres || []).filter((x) => !without.includes(x)) })} />
         {d.media === 'tv' && keys?.tvdb && <Drop label="TV category (TheTVDB)" opts={[[0, 'None'], ...TVDB_CATS]} value={f.tvdbGenre || 0} set={(c) => setF({ tvdbGenre: c || undefined })} />}
         <Drop label="Match genres" opts={[['any', 'Any of them'], ['all', 'All of them']]} value={f.match || 'any'} set={(match) => setF({ match })} />
       </div>
-      {!lib && <div className="b-half"><SearchPick kind="keyword" label="Keywords" canOut value={f.keywords || []} set={(keywords) => setF({ keywords: keywords.length ? keywords : undefined })} /></div>}
+      <InOutSearch kind="keyword" label="Keywords" value={f.keywords || []} set={(keywords) => setF({ keywords })} />
     </>,
     release: <div className="b-dds">
       <Drop label="When" opts={WHEN} value={when} set={(w) => setF({ when: w === 'any' ? undefined : w, ...(w !== 'years' ? { yearFrom: undefined, yearTo: undefined } : {}) })} />
@@ -313,7 +372,7 @@ export function Builder({ draft, page, close, saved }: { draft: Draft; page: { g
       {shows && !lib && <Drop label="Type" multi opts={TV_TYPE} value={f.type || []} set={(type) => setF({ type: type.length ? type : undefined })} />}
       <Drop label={films && !shows ? 'Runtime from' : 'Length from'} opts={MINUTES} value={f.runtimeFrom || 0} set={(m) => setF({ runtimeFrom: m || undefined })} />
       <Drop label={films && !shows ? 'Runtime to' : 'Length to'} opts={MINUTES} value={f.runtimeTo || 0} set={(m) => setF({ runtimeTo: m || undefined })} />
-      {films && !lib && reg && reg.certs.length > 0 && <Drop label="Age rating" opts={[['', 'Any'], ...reg.certs.map((c): [string, string] => [c, `Up to ${c}`])]}
+      {films && (!lib || home) && reg && reg.certs.length > 0 && <Drop label="Age rating" opts={[['', 'Any'], ...reg.certs.map((c): [string, string] => [c, `Up to ${c}`])]}
         value={f.cert || ''} set={(cert) => setF({ cert: cert || undefined })} />}
     </div>,
     scores: <>
@@ -324,10 +383,11 @@ export function Builder({ draft, page, close, saved }: { draft: Draft; page: { g
       </div>
       <div className="b-sliders">
         <Slider range label="TMDB score" steps={SCORE_STEPS} show={tenth} value={[f.scoreFrom, f.scoreTo]} set={([scoreFrom, scoreTo]) => setF({ scoreFrom, scoreTo })} />
-        {!lib && <Slider range label="Votes" steps={VOTE_STEPS} show={votesText} value={[f.votes, f.votesTo]} set={([votes, votesTo]) => setF({ votes, votesTo })} />}
+        <Slider range label="Votes" steps={VOTE_STEPS} show={votesText} value={[f.votes, f.votesTo]} set={([votes, votesTo]) => setF({ votes, votesTo })} />
         {keys && SOURCES.filter(([, , , , need]) => !need || keys[need]).map(([k, n, st, unit]) =>
           <Slider key={k} label={n} steps={st} show={(v) => `${unit ? v : tenth(v)}${unit}`} value={f.ext?.[k]} set={(v) => setExt(k, v)} />)}
       </div>
+      <InOut label="Awards" opts={AWARDS} ins={f.awards || []} outs={f.awardsOut || []} set={(a, o) => setF({ awards: some(a), awardsOut: some(o) })} />
       {floors > 0 && <div className="b-dds">
         <Drop label="Titles must meet" opts={[['all', 'All set scores'], ['any', 'Any set score']]} value={f.meet || 'all'} set={(meet) => setF({ meet: meet === 'all' ? undefined : meet })} />
         <Drop label="No score from a source" opts={[['out', 'Leave the title out'], ['keep', 'Keep it']]} value={f.missing || 'out'} set={(missing) => setF({ missing: missing === 'out' ? undefined : missing })} />
@@ -335,24 +395,34 @@ export function Builder({ draft, page, close, saved }: { draft: Draft; page: { g
     </>,
     streaming: <>
       <div className="b-sec">
-        <div className="b-h"><span className="dd-l">{`On · ${cname(region || undefined)}`}</span>
-          {mineHere && <button type="button" className={`l-chip${f.my ? ' on' : ''}`} aria-pressed={!!f.my} onClick={() => setF({ my: !f.my || undefined })}>{`My services · ${prefs!.services.length}`}</button>}</div>
-        {f.my ? null : reg ? <ServiceGrid services={reg.services} on={(id) => picked.includes(id)} toggle={(id) => setF({ services: picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id] })} />
-          : <p className="acct-note">Loading the services…</p>}
+        <div className="b-dds">{country}</div>
       </div>
-      {!lib && <div className="b-dds"><Drop label="How" opts={[['flatrate', 'Subscription'], ['free', 'Free'], ['rent', 'Rent or buy']]} value={f.how || 'flatrate'} set={(how) => setF({ how })} />
-        {shows && <Drop label="Made by" multi search opts={NETWORKS} value={f.networks || []} set={(networks) => setF({ networks: networks.length ? networks : undefined })} />}</div>}
+      <div className="b-sec">
+        <div className="b-h"><span className="dd-l">Services</span>
+          {mineHere && <button type="button" className={`l-chip${f.my ? ' on' : ''}`} aria-pressed={!!f.my} onClick={() => setF({ my: !f.my || undefined })}>{`My services · ${prefs!.services.length}`}</button>}</div>
+        {!reg ? <p className="acct-note">Loading the services…</p> : <div className="b-dds">
+          {!f.my && <Drop label="Include" multi search empty="Any" opts={svcs.map((x): [number, string] => [x.ids[0], x.name])} value={firsts(picked)}
+            set={(v) => setF({ services: ids(v), servicesOut: some((f.servicesOut || []).filter((x) => !ids(v).includes(x))) })} />}
+          <Drop label="Exclude" multi search empty="None" opts={svcs.map((x): [number, string] => [x.ids[0], x.name])} value={firsts(f.servicesOut || [])}
+            set={(v) => setF({ servicesOut: some(ids(v)), services: picked.filter((x) => !ids(v).includes(x)) })} />
+        </div>}
+      </div>
+      <div className="b-sec"><span className="dd-l">Watch as</span><div className="b-dds">
+        <Drop label="Any of" multi empty="Any way" opts={WATCH} value={f.watch || []} set={(watch) => setF({ watch: some(watch) })} />
+      </div></div>
     </>,
-    language: <div className="b-dds">
-      {d.media !== 'anime' && d.media !== 'animefilm' && opts && <Drop label="Original language" multi search opts={opts.languages.map((l): [string, string] => [l.id, l.name])} value={langs}
-        set={(v) => setF({ language: undefined, languages: v.length ? v : undefined })} />}
-      {opts && <Drop label="Made in" multi search opts={opts.countries.map((c): [string, string] => [c.id, c.name])} value={lands} set={(v) => setF({ country: undefined, countries: v.length ? v : undefined })} />}
-    </div>,
+    language: <>
+      {d.media !== 'anime' && d.media !== 'animefilm' && opts && <InOut label="Original language" search opts={opts.languages.map((l): [string, string] => [l.id, l.name])} ins={langs} outs={f.languagesOut || []}
+        set={(l, o) => setF({ language: undefined, languages: some(l), languagesOut: some(o) })} />}
+      {opts && <InOut label="Made in" search opts={opts.countries.map((c): [string, string] => [c.id, c.name])} ins={lands} outs={f.countriesOut || []}
+        set={(c, o) => setF({ country: undefined, countries: some(c), countriesOut: some(o) })} />}
+    </>,
     people: <>
-      {people && <div className="b-half"><SearchPick kind="person" label={d.media === 'both' ? 'Cast (films)' : 'Cast'} value={f.cast || []} set={(cast) => setF({ cast: cast.length ? cast : undefined })} /></div>}
-      {people && (f.cast || []).length > 1 && <div className="b-half"><Drop label="Cast match" opts={[['any', 'Any of them'], ['all', 'All of them']]} value={f.castMatch || 'any'} set={(castMatch) => setF({ castMatch: castMatch === 'any' ? undefined : castMatch })} /></div>}
-      {people && <div className="b-half"><SearchPick kind="person" label={d.media === 'both' ? 'Director, writer (films)' : 'Director and writer'} value={f.crew || []} set={(crew) => setF({ crew: crew.length ? crew : undefined })} /></div>}
-      <div className="b-half"><SearchPick kind="company" label="Studios" canOut value={f.companies || []} set={(companies) => setF({ companies: companies.length ? companies : undefined })} /></div>
+      {people && <InOutSearch kind="person" label={d.media === 'both' ? 'Cast (movies)' : 'Cast'} value={f.cast || []} set={(cast) => setF({ cast })} />}
+      {people && (f.cast || []).filter((x) => !x.out).length > 1 && <div className="b-half"><Drop label="Cast match" opts={[['any', 'Any of them'], ['all', 'All of them']]} value={f.castMatch || 'any'} set={(castMatch) => setF({ castMatch: castMatch === 'any' ? undefined : castMatch })} /></div>}
+      {people && <InOutSearch kind="person" label={d.media === 'both' ? 'Director, writer (movies)' : 'Director and writer'} value={f.crew || []} set={(crew) => setF({ crew })} />}
+      <InOutSearch kind="company" label="Studios" value={f.companies || []} set={(companies) => setF({ companies })} />
+      {shows && <div className="b-half"><Drop label="TV network" multi search empty="Any" opts={NETWORKS} value={f.networks || []} set={(networks) => setF({ networks: some(networks) })} /></div>}
     </>,
     library: <>
       <div className="b-lines">
@@ -384,7 +454,7 @@ export function Builder({ draft, page, close, saved }: { draft: Draft; page: { g
           <span key={i} className={`b-tag${no ? ' no' : ''}`}>{clear ? <button type="button" onClick={() => setG(grp)}>{t}</button> : t}
             {clear && <button type="button" className="b-x" aria-label={`Remove ${t}`} onClick={clear}><Icon d={PATHS.cross} size={12} width={2.2} /></button>}</span>))}</div>
         {e && <p className="acct-err b-err">{e}</p>}
-        <div className="b-body">
+        <div className={`b-body${full ? ' full' : ''}`}>
           <nav className="b-nav" aria-label="List options">{groups.map(([k, n, ic]) => (
             <button key={k} type="button" className={`b-tab${at === k ? ' on' : ''}`} aria-current={at === k} onClick={() => setG(k)}>
               <span className="pk-c"><Icon d={ic} size={18} width={1.9} /></span><span className="b-tn">{n}</span>{count(k) > 0 && <span className="b-n">{count(k)}</span>}</button>))}</nav>
@@ -392,14 +462,17 @@ export function Builder({ draft, page, close, saved }: { draft: Draft; page: { g
           {/* on a phone the preview is a bar at the foot, all of it the button that opens the posters over the settings: the first
               three stacked as on the list cards, the count, a chevron; the scores' progress a line along its top */}
           <aside className={`b-prev${seeing ? ' open' : ''}`}>
-            <div className="b-ph"><span className="dd-l">Preview</span><span className={`b-pn${loading ? ' busy' : ''}`}>{said}</span></div>
+            <div className="b-ph"><span className={`dd-l${loading ? ' busy' : ''}`}>{said}</span>
+              <button type="button" className="b-full" aria-pressed={full} onClick={() => setFull(!full)}>{full ? 'Back' : 'Preview'}</button></div>
             <button type="button" className="b-see" aria-expanded={seeing} aria-label={`${said}: ${seeing ? 'hide' : 'see'} the titles`} onClick={() => setSeeing(!seeing)}>
               <span className="l-stack">{prev?.posters.slice(0, 3).map((t) => t.poster && <img key={t.key} src={t.poster} alt="" />)}</span>
               <span className={`b-sn${loading ? ' busy' : ''}`}>{said}</span><Icon d="M6 15l6-6 6 6" size={20} width={1.9} />
             </button>
-            {prev && floors > 0 && prev.pool > 0 && <div className="b-check"><span>scores checked</span><span>{`${prev.pool - prev.pending} / ${prev.pool}`}</span>
+            {prev && checked > 0 && prev.pool > 0 && <div className="b-check"><span>titles checked</span><span>{`${prev.pool - prev.pending} / ${prev.pool}`}</span>
               <i style={{ width: `${prev.pool ? Math.round(((prev.pool - prev.pending) / prev.pool) * 100) : 0}%` }} /></div>}
-            <div className="l-pgrid">{prev?.posters.map((t) => <img key={t.key} src={t.poster || undefined} alt={t.title} title={t.title} loading="lazy" />)}</div>
+            {/* Latest: each poster's day */}
+            <div className="l-pgrid">{prev?.posters.map((t) => <figure key={t.key} className="b-pi"><img src={t.poster || undefined} alt={t.title} title={t.title} loading="lazy" />
+              {t.day && <span className="b-pd">{new Date(t.day).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}</figure>)}</div>
           </aside>
         </div>
       </div>

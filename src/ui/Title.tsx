@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { TrendCard, usePosterDial } from './Cards';
 import { EpisodesPane, PickDay, airAt, fmtDay, swipeDown, timed } from './Episodes';
 import { getJ, postJ } from './lib/api';
-import { DASH, ago } from './lib/format';
+import { DASH, ago, srcs } from './lib/format';
 import { useHome, usePhone } from './lib/home';
 import { Icon } from './lib/icons';
 import { type Ref, type Tile } from './lib/media';
@@ -24,22 +24,18 @@ type Body = { t?: Title; err?: string; loading?: boolean; top?: number; fade?: b
 export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
   const { reload } = useHome();
   const tp = useRef<HTMLDivElement>(null), panel = useRef<HTMLElement>(null), body = useRef<HTMLDivElement>(null);
-  const x = useRef<HTMLButtonElement>(null);
-  const phone = usePhone();
   const seq = useRef(0), from = useRef<Element | null>(null), closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [content, setContent] = useState<Body>({});
   const [view, setView] = useState(0);   // each opening is a fresh card (its tab, season, …); a redraw keeps them
   const [trailer, setTrailer] = useState<string | null>(null);
   const [pick, setPick] = useState<(PickArgs & { n: number }) | null>(null);
   const [full, setFull] = useState(false);
-  // small view over a full page
-  const [under, setUnder] = useState<{ t: Title; view: number } | null>(null);
   const trail = useRef<{ t: Title; view: number; top: number }[]>([]);
   const [person, setPerson] = useState<(PersonRef & { n: number }) | null>(null);
   const personOn = useRef(false);
   useEffect(() => { personOn.current = !!person; }, [person]);
-  const now = useRef({ full, t: content.t, view, under });
-  useEffect(() => { now.current = { full, t: content.t, view, under }; });
+  const now = useRef({ full, t: content.t, view });
+  useEffect(() => { now.current = { full, t: content.t, view }; });
   const fullEl = useRef<HTMLDivElement>(null);
   const trailerOn = useRef(false);
   useEffect(() => { trailerOn.current = !!trailer; }, [trailer]);
@@ -54,7 +50,7 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
     seq.current++; s.classList.remove('in'); s.classList.add('out'); document.body.classList.remove('tp-open'); setTitleNav(null);
     const at = document.activeElement;
     if (!at || at === document.body || s.contains(at)) (from.current as HTMLElement | null)?.focus?.();
-    closing.current = setTimeout(() => { s.hidden = true; s.classList.remove('out', 'swiped'); setFull(false); setUnder(null); trail.current = []; if (panel.current) Object.assign(panel.current.style, { transform: '', transition: '' }); }, 240);
+    closing.current = setTimeout(() => { s.hidden = true; s.classList.remove('out', 'swiped'); setFull(false); trail.current = []; if (panel.current) Object.assign(panel.current.style, { transform: '', transition: '' }); }, 240);
   }, []);
 
   const open = useCallback(async (r: Ref) => {
@@ -65,20 +61,15 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
     if (n !== seq.current) return;
     clearTimeout(closing.current);
     setPerson(null);
+    // the full page; one opened from another goes on its trail
     const was = now.current;
-    // phone: straight to the full page
-    const phone = matchMedia('(max-width: 800px)').matches;
-    if (was.full && was.t && !s.hidden && !s.classList.contains('out')) {
-      if (phone) trail.current.push({ t: was.t, view: was.view, top: fullEl.current?.scrollTop || 0 });
-      else setUnder({ t: was.t, view: was.view });
-    }
-    setView(n); setFull(phone); setContent({ ...(quick || { loading: true }), top: 0 });
+    if (was.full && was.t && !s.hidden && !s.classList.contains('out')) trail.current.push({ t: was.t, view: was.view, top: fullEl.current?.scrollTop || 0 });
+    setView(n); setFull(true); setContent({ ...(quick || { loading: true }), top: 0 });
     if (s.hidden || s.classList.contains('out')) {
       s.classList.remove('out', 'in', 'swiped'); s.hidden = false; void s.offsetWidth; s.classList.add('in');
       if (!history.state?.tp) history.pushState({ tp: 1 }, '');
     }
     document.body.classList.add('tp-open');
-    x.current?.focus();
     if (quick) return;
     const got = await data;
     if (n !== seq.current) return;
@@ -97,21 +88,11 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
   }, [key, reload]);
   const backRef = useRef<(() => boolean) | null>(null);
   const closePerson = () => { if (!personOn.current) return false; personOn.current = false; setPerson(null); return true; };
-  const backToUnder = () => {
-    const u = now.current.under; if (!u || now.current.full) return false;
-    seq.current++; setUnder(null); setView(u.view); setContent({ t: u.t }); setFull(true);
-    return true;
-  };
   const backDownTrail = () => {
     if (!now.current.full || !trail.current.length) return false;
     const b = trail.current.pop()!;
     seq.current++; setView(b.view); setContent({ t: b.t, top: b.top });
     return true;
-  };
-  const expand = () => {
-    const u = now.current.under;
-    if (u) trail.current.push({ ...u, top: fullEl.current?.scrollTop || 0 });
-    setUnder(null); setFull(true);
   };
   const ctx = useMemo<TitleState>(() => ({ reloadTitle, backRef, openPerson: (p) => setPerson((x) => ({ ...p, n: (x?.n || 0) + 1 })),
     pickDay: (a) => setPick((p) => ({ ...a, n: (p?.n || 0) + 1 })), playTrailer: (url) => {
@@ -135,10 +116,10 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
     const p = panel.current!;
     const pop = () => {
       if (shut()) return;
-      if (closeTrailer() || closePerson() || backToUnder() || backRef.current?.() || backDownTrail()) history.pushState({ tp: 1 }, '');
+      if (closeTrailer() || closePerson() || backRef.current?.() || backDownTrail()) history.pushState({ tp: 1 }, '');
       else closeTitle(true);
     };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !shut()) { if (!closeTrailer() && !closePerson() && !backToUnder() && !backRef.current?.() && !backDownTrail()) closeTitle(); } };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !shut()) { if (!closeTrailer() && !closePerson() && !backRef.current?.() && !backDownTrail()) closeTitle(); } };
     window.addEventListener('popstate', pop); document.addEventListener('keydown', esc);
     // iOS gives a web app on the home screen no back swipe, so there the card has its own: from the left edge it follows the
     // finger and, let go past a third of the screen (or flicked), slides away and closes; otherwise it slides back
@@ -164,7 +145,7 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
       window.removeEventListener('popstate', pop); document.removeEventListener('keydown', esc);
       p.removeEventListener('touchstart', ts); p.removeEventListener('touchmove', tm); p.removeEventListener('touchend', te);
     };
-  }, [closeTitle, full, under]);
+  }, [closeTitle, full]);
 
   const player = trailer && (
     // trailer
@@ -174,26 +155,24 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
       <button type="button" className="hero-x" aria-label="Close the trailer" onClick={closeTrailer}>×</button>
     </div>
   );
-  const base = full && content.t ? { t: content.t, view } : under;
-  const peek = !full && (
-    <aside ref={panel} className={`tpanel tpeek${trailer ? ' playing' : ''}`} role="dialog" aria-modal="true" aria-label="Title details">
+  const base = full && content.t ? { t: content.t, view } : null;
+  // loading or failed
+  const wait = !content.t && (
+    <aside ref={panel} className="tpanel tpeek" role="dialog" aria-modal="true" aria-label="Title details">
       <div ref={body} className="tp-body" id="tp-body">
-        {content.t ? <TitlePeek key={view} d={content.t} expand={expand} expandRef={x} close={close} />
-          : content.err ? <div className="tp-note">{content.err}</div> : content.loading ? <div className="tp-note">Loading…</div> : null}
+        {content.err ? <div className="tp-note">{content.err}</div> : content.loading ? <div className="tp-note">Loading…</div> : null}
       </div>
-      {content.t && !phone && <button ref={x} type="button" className="tp-dt" aria-label="Open the full page" onClick={expand}><Icon d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" size={14} /><b>Details</b></button>}
-      {player}
     </aside>
   );
   return createPortal(
     <TitleCtx.Provider value={ctx}>
       <div ref={tp} className={`tp-scrim${base ? ' full' : ''}`} id="tp" hidden onClick={(e) => { if (e.target === e.currentTarget) closeTitle(); }}>
         {base && (
-          <div key={base.view} ref={(el) => { fullEl.current = el; if (full) { panel.current = el; body.current = el; } }} className="tfull" role="dialog" aria-modal="true" aria-label={base.t.title}>
+          <div key={base.view} ref={(el) => { fullEl.current = el; if (el) { panel.current = el; body.current = el; el.focus({ preventScroll: true }); } }} tabIndex={-1} className="tfull" role="dialog" aria-modal="true" aria-label={base.t.title}>
             <TitleFull key={base.view} d={base.t} close={close} leave={leave} scroller={fullEl} player={full ? player : null} />
           </div>
         )}
-        {(!full || !content.t) && (under ? <div className="tp-over" onClick={(e) => { if (e.target === e.currentTarget) closeTitle(); }}>{peek}</div> : peek)}
+        {wait}
         {person && <div className="tp-over" onClick={(e) => { if (e.target === e.currentTarget) closeTitle(); }}><PersonView key={person.n} p={person} close={close} /></div>}
       </div>
       {pick && <PickDay key={pick.n} a={pick} close={() => setPick(null)} />}
@@ -301,8 +280,9 @@ export function Scores({ d, children }: { d: Title; children?: ReactNode }) {
 }
 
 const trend = (t: Tile) => <TrendCard t={t} />;
-const KIND: Record<string, string> = { movie: 'Film', tv: 'Show', anime: 'Anime' };
+const KIND: Record<string, string> = { movie: 'Movie', tv: 'Show', anime: 'Anime' };
 const wide = (u: string | null) => u?.replace('/t/p/w780/', '/t/p/w1280/') || undefined;
+const big = (u: string | null) => u?.replace('/t/p/w342/', '/t/p/w500/') || undefined;
 
 // status circle
 export function StatusDial({ d }: { d: Title }) {
@@ -338,7 +318,7 @@ export function StatusDial({ d }: { d: Title }) {
 }
 
 // carousel words
-function Head({ d, h, details, detailsRef }: { d: Title; h: 'h2' | 'h3'; details?: () => void; detailsRef?: RRef<HTMLButtonElement> }) {
+function Head({ d, h }: { d: Title; h: 'h2' | 'h3' }) {
   const { playTrailer } = useTitle();
   const phone = usePhone();
   const H = h;
@@ -353,25 +333,8 @@ function Head({ d, h, details, detailsRef }: { d: Title; h: 'h2' | 'h3'; details
       {genresOf(d) && <div className="tc-meta hero-meta hero-genres">{genresOf(d)}</div>}
       <Scores d={d}>
         {d.trailer && <button type="button" className="tc-ytico" aria-label="Play the trailer" onClick={() => playTrailer(d.trailer!)}><YtLogo /><b className="tc-link">Trailer</b></button>}
-        {details && <button ref={detailsRef} type="button" className="tc-ytico tc-dt" aria-label="Open the full page" onClick={details}><Icon d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" /><b className="tc-link">Details</b></button>}
         {!phone && <><span className="tc-sep" /><StatusDial d={d} /></>}
       </Scores>
-    </>
-  );
-}
-
-// small view
-function TitlePeek({ d, expand, expandRef, close }: { d: Title; expand: () => void; expandRef: RRef<HTMLButtonElement>; close: () => void }) {
-  const phone = usePhone();
-  return (
-    <>
-      <div className="tpk-art" onClick={(e) => { if (!(e.target as Element).closest('button, a, .dialhost')) expand(); }}>
-        {(d.backdrop || d.poster) && <img className="hero-bg on" src={wide(d.backdrop || d.poster)} alt="" />}
-        <div className="hero-shade" />
-        <div className="tpk-head"><Head d={d} h="h2" details={phone ? expand : undefined} detailsRef={phone ? expandRef : undefined} /></div>
-      </div>
-      <button type="button" className="tp-x" aria-label="Close" onClick={close}><Icon d="M6 6l12 12M18 6L6 18" size={14} /></button>
-      {d.overview && <div className="tpk-body"><p className="hero-story">{d.overview}</p></div>}
     </>
   );
 }
@@ -408,9 +371,11 @@ function TitleFull({ d, close, leave, scroller, player }: { d: Title; close: () 
     <>
       {top}
       <section className="hero tf-hero">
-        {(d.backdrop || d.poster) && <img className="hero-bg on" src={wide(d.backdrop || d.poster)} alt="" />}
+        {(d.backdrop || d.poster) && <img className="hero-bg on" src={wide(d.backdrop || d.poster)} srcSet={d.backdrop ? srcs(d.backdrop, 'wide') : undefined} sizes="100vw" alt="" />}
         <div className="hero-shade" />
-        <div className="hero-body"><Head d={d} h="h2" />{d.overview && <p className="hero-story">{d.overview}</p>}</div>
+        {/* poster (wider screens) */}
+        {d.poster && !phone && <img className="tf-poster" src={big(d.poster)} srcSet={srcs(d.poster, 'poster')} sizes="260px" alt="" />}
+        <div className="hero-body"><Head d={d} h="h2" />{d.overview && <HeroStory key={d.key} text={d.overview} />}</div>
         {d.type !== 'movie' && !phone && <div className="tf-next" ref={setNextSlot} />}
         {player}
       </section>
@@ -426,8 +391,10 @@ function TitleFull({ d, close, leave, scroller, player }: { d: Title; close: () 
           </section>
         )}
         {!!d.cast?.length && row('cast', 'Cast', d.cast, (x) => `${x.name}|${x.role}`, (x) => <CastCard x={x} opens={d.key.startsWith('tmdb:')} />)}
+        {/* collection */}
+        {d.collectionItems?.some((t) => t.key !== d.key) && row('collection', d.collection?.name || 'Collection',
+          d.collectionItems.map((t) => (t.key === d.key ? { ...t, tag: 'THIS MOVIE' } : t)), (t) => t.key, trend)}
         {!!d.similar?.length && row('similar', 'Similar', d.similar, (t) => t.key, trend, () => setGrid(true))}
-        {!!d.collectionItems?.length && row('collection', 'Collection', d.collectionItems, (t) => t.key, trend)}
       </div>
     </>
   );
@@ -491,6 +458,15 @@ function PersonView({ p, close }: { p: PersonRef; close: () => void }) {
 }
 
 // story
+// the title page's story (wider screens), See more
+function HeroStory({ text }: { text: string }) {
+  const p = useRef<HTMLParagraphElement>(null), [full, setFull] = useState(false), [cut, setCut] = useState(false);
+  useLayoutEffect(() => { const x = p.current; setCut(!!x && x.scrollHeight > x.clientHeight + 1); }, []);
+  return <>
+    <p ref={p} className={`hero-story${full ? ' full' : ''}`}>{text}</p>
+    {cut && !full && <button type="button" className="tf-more" onClick={() => setFull(true)}>See more</button>}
+  </>;
+}
 function Story({ d }: { d: Title }) {
   const p = useRef<HTMLParagraphElement>(null), [full, setFull] = useState(false), [cut, setCut] = useState(false);
   useLayoutEffect(() => { const x = p.current; setCut(!!x && x.scrollHeight > x.clientHeight + 1); }, []);

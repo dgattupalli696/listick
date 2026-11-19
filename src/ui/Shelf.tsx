@@ -30,7 +30,7 @@ export function ShelfWrap({ reload, children }: { reload: () => void; children: 
 // kind (?kind=)
 const TAG = 'M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9zM7.5 7.5h.01';
 const ORDERS = (first: string) => [['list', first, ICON.trend], ['rating', 'Rating', ICON.star], ['newest', 'Newest', ICON.cal], ['az', 'A–Z', ICON.abc]] as const;
-export function ShelfGrid({ title, head, items, first, genres = [], empty, dismiss }: { title?: string; head?: ReactNode; items: Item[]; first: string; genres?: string[]; empty: ReactNode; dismiss?: (key: string) => void }) {
+export function ShelfGrid({ title, head, sub, items, first, genres = [], empty, dismiss }: { title?: string; head?: ReactNode; sub?: ReactNode; items: Item[]; first: string; genres?: string[]; empty: ReactNode; dismiss?: (key: string) => void }) {
   const [sort, setSort] = useState<Sort>('list'), [genre, setGenre] = useState<string | null>(null);
   const phone = usePhone(), [filters, setFilters] = useState(false), [showG, setShowG] = useState(false);
   const [kind, setKind] = useState<Kind>(() => { const k = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('kind'); return k === 'movie' || k === 'tv' ? k : 'all'; });
@@ -56,11 +56,15 @@ export function ShelfGrid({ title, head, items, first, genres = [], empty, dismi
     <div className="gen-rows shelf-g">
       <div className="group-head pick-head shelf-head">{head ?? (title ? <h1 className="st-title shelf-t">{title}</h1> : <span />)}
         <div className="pick-tools">
+        {/* line before Filters on a list */}
+        {head && <span className="pk-sep" />}
         {/* wide: kind and order slide out beside Filters */}
         {!phone && <div className={`fslide${filters ? ' open' : ''}`} inert={!filters}>{genreBtn}{genreBtn && <span className="pk-sep" />}{kinds}{mixed && <span className="pk-sep" />}{orders}<span className="pk-sep" /></div>}
         <div className="pk-set fbtn"><PkBtn label="Filters" data={{}} face="M4 6h16M7 12h10M10 18h4" on={filters} pressed={filters} onClick={() => setFilters(!filters)} /></div>
         <div className="pk shelf-n" role="status" aria-label={titles(shown.length)}><span className="pk-c"><b>{shown.length}</b></span><span className="pk-t">{shown.length === 1 ? 'Title' : 'Titles'}</span></div>
       </div></div>
+      {/* a list's filters */}
+      {sub}
       {filters && (phone || (showG && genres.length > 1)) && <div className="fpanel">
         {phone && genreBtn}{phone && kinds}{phone && orders}
         {showG && genres.length > 1 && <div className="fgenres" role="group" aria-label="Genre">

@@ -1,13 +1,13 @@
 'use client';
 // A search picker (the builder's keywords, people and studios): a name typed into the field, TMDB's matches in a menu under it,
-// each pick a tag below; a tag that can be left out (keywords, studios) turns struck through on a tap, its × takes it away
+// each pick a tag below, its × takes it away
 import { useEffect, useRef, useState } from 'react';
 import { getJ } from './lib/api';
 import { Icon, PATHS } from './lib/icons';
 
 export type Picked = { id: number; name: string; out?: boolean };
 type Hit = { id: number; name: string; sub: string | null; image: string | null };
-export function SearchPick({ kind, label, value, set, canOut }: { kind: 'keyword' | 'person' | 'company'; label: string; value: Picked[]; set: (v: Picked[]) => void; canOut?: boolean }) {
+export function SearchPick({ kind, label, value, set }: { kind: 'keyword' | 'person' | 'company'; label: string; value: Picked[]; set: (v: Picked[]) => void }) {
   const [text, setText] = useState(''), [hits, setHits] = useState<Hit[] | null>(null), box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const want = text.trim();
@@ -39,7 +39,7 @@ export function SearchPick({ kind, label, value, set, canOut }: { kind: 'keyword
       )}
       {value.length > 0 && <div className="sp-tags">{value.map((x) => (
         <span key={x.id} className={`b-tag${x.out ? ' no' : ''}`}>
-          {canOut ? <button type="button" aria-pressed={!!x.out} title={x.out ? 'Left out' : 'Included'} onClick={() => set(value.map((y) => (y.id === x.id ? { ...y, out: !y.out || undefined } : y)))}>{x.name}</button> : x.name}
+          {x.name}
           <button type="button" className="b-x" aria-label={`Remove ${x.name}`} onClick={() => set(value.filter((y) => y.id !== x.id))}><Icon d={PATHS.cross} size={12} width={2.2} /></button>
         </span>))}</div>}
     </div>

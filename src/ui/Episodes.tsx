@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { createPortal } from 'react-dom';
 import { PIcon, useRingRate, useTwoTap } from './Cards';
 import { getJ, postJ } from './lib/api';
+import { srcs } from './lib/format';
 import { Icon } from './lib/icons';
 import { nextSeason, swipeCloses, useTitle, wheelSteps, type Episode, type PickArgs, type Play, type Title } from './lib/title';
 
@@ -309,7 +310,7 @@ function NextCard({ d, e, episodes, season, markEpisodes, open }: { d: Title; e:
     <div className="tc-next">
       <div className="tc-nstill">
         <button type="button" className="tc-nopen" aria-label={e.name || `Episode ${e.ep}`} onClick={() => open(e.ep)}>
-          {epImg(d, e) && <img src={epImg(d, e)!} alt="" className={e.still ? undefined : 'fb'} />}
+          {epImg(d, e) && <img src={epImg(d, e)!} srcSet={srcs(epImg(d, e), 'still')} sizes={EP_SIZES} alt="" className={e.still ? undefined : 'fb'} />}
         </button>
         <span className={`tc-nexttag${playing(d, e, season) ? ' playing' : ''}`}>{playing(d, e, season) ? 'Watching' : ep.upcoming ? airs(e.air) : 'Next up'}</span>
         <div className="tc-markwrap">
@@ -340,7 +341,7 @@ function HeroNext({ d, e, episodes, season, markEpisodes, open }: { d: Title; e:
     <div className="hero-next">
       <div className="hn-art">
         <button type="button" className="hn-still" aria-label={name} onClick={() => open(e.ep)}>
-          {epImg(d, e) && <img src={epImg(d, e)!} alt="" className={e.still ? undefined : 'fb'} />}
+          {epImg(d, e) && <img src={epImg(d, e)!} srcSet={srcs(epImg(d, e), 'still')} sizes={EP_SIZES} alt="" className={e.still ? undefined : 'fb'} />}
         </button>
         <span className={`tc-nexttag${now ? ' playing' : ''}`}>{now ? 'Watching' : ep.upcoming ? airs(e.air) : 'Next up'}</span>
         <div className="hn-row">
@@ -401,7 +402,7 @@ function StripTile({ d, e, episodes, season, markEpisodes, open, next }: { d: Ti
     <div className={`tc-se${e.watched ? ' seen' : ''}${next ? ' next' : ''}`}>
       <div className="tc-ses">
         <button type="button" className="tc-sopen" aria-label={name} onClick={() => open(e.ep)}>
-          {epImg(d, e) && <img src={epImg(d, e)!} alt="" loading="lazy" className={e.still ? undefined : 'fb'} />}
+          {epImg(d, e) && <img src={epImg(d, e)!} srcSet={srcs(epImg(d, e), 'still')} sizes={EP_SIZES} alt="" loading="lazy" className={e.still ? undefined : 'fb'} />}
           {e.overview && <span className="tc-sov"><b>{[ep.upcoming ? airs(e.air) : epDay(e.air), e.runtime ? `${e.runtime}m` : null].filter(Boolean).join(' · ')}</b><span>{e.overview}</span></span>}
         </button>
         {playing(d, e, season) && <span className="tc-nexttag playing">Watching</span>}
@@ -421,6 +422,8 @@ function StripTile({ d, e, episodes, season, markEpisodes, open, next }: { d: Ti
 
 // the episode a player says is playing
 // episode image
+// episode card width
+const EP_SIZES = '(min-width: 801px) 17vw, 50vw';
 const epImg = (d: Title, e: Episode) => e.still || (d.backdrops?.length ? d.backdrops[e.ep % d.backdrops.length] : d.backdrop || d.poster);
 const playing = (d: Title, e: Episode, season: number) => !!d.watching && d.watching.se === (e.se ?? season) && d.watching.ep === (e.tep ?? e.ep);
 type Mark = (eps: number[], watched: boolean, at?: number | null, times?: (number | null)[]) => Promise<unknown>;
@@ -487,7 +490,7 @@ function EpisodeRow({ d, e, episodes, next, season, markEpisodes, open }: { d: T
   return (
     <div className={`tc-ep${w ? ' seen' : ''}${ep.upcoming ? ' soon' : ''}${next ? ' next' : ''}`} onClick={() => open(e.ep)}>
       <div className="tc-still">
-        {epImg(d, e) && <img src={epImg(d, e)!} alt="" loading="lazy" className={e.still ? undefined : 'fb'} />}
+        {epImg(d, e) && <img src={epImg(d, e)!} srcSet={srcs(epImg(d, e), 'still')} sizes={EP_SIZES} alt="" loading="lazy" className={e.still ? undefined : 'fb'} />}
         {playing(d, e, season) ? <span className="tc-nexttag playing">Watching</span> : next && <span className="tc-nexttag">Next up</span>}
         {tick}
       </div>
@@ -568,7 +571,7 @@ function EpisodeCard({ d, e, episodes, season, where, markEpisodes, dir, open }:
   return (
     <div className={`tep-in${dir ? ` from-${dir}` : ''}`}>
       <div className="tpk-art">
-        {epImg(d, e) && <img className={`hero-bg on${e.still ? '' : ' fb'}`} src={(epImg(d, e)!).replace(/\/t\/p\/w\d+\//, '/t/p/w780/')} alt="" />}
+        {epImg(d, e) && <img className={`hero-bg on${e.still ? '' : ' fb'}`} src={(epImg(d, e)!).replace(/\/t\/p\/w\d+\//, '/t/p/w780/')} srcSet={srcs(epImg(d, e), 'still')} sizes="(min-width: 801px) 60vw, 100vw" alt="" />}
         <div className="hero-shade" />
         <div className="tpk-head">
           <span className="hero-kick">{`${d.title} · ${where} · E${e.ep}`}</span>

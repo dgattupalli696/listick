@@ -42,7 +42,7 @@ export type Title = {
   certification: string | null; trailer: string | null; writers?: string[]; money?: { budget: number | null; revenue: number | null };
   anime?: boolean; mal?: { score: number | null; rank: number | null; url: string }; kitsu?: { score: number | null; url: string }; facts?: Record<string, string | number | null>;
   episodes?: number | null; format?: string | null; malUrl?: string | null;
-  watchlist: boolean; upNext: string | null; similar: Tile[]; collectionItems: Tile[];
+  watchlist: boolean; upNext: string | null; similar: Tile[]; collectionItems: Tile[]; collection?: { id: number; name: string } | null;
   watching?: { source: string; se: number; ep: number; pct: number | null } | null;
   you?: { plays?: number; episodes?: number; bySeason?: Record<number, number>; bySeasonTvdb?: Record<number, number>; rating?: number | null; first?: number | null; last?: number | null;
     moviePlays?: Play[]; seasonRatings?: Record<number, number>; seasonAvg?: Record<number, number> };

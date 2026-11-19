@@ -159,7 +159,6 @@ export function ListPage({ id }: { id: string }) {
         <div className="l-cm"><Badge l={open} /><span>{titles(open.count)}</span>{open.kind === 'smart' && <span>· {ago(open.refreshedAt)}</span>}{!open.mine && open.owner && <span>· by {open.owner}</span>}</div>
         {open.description && <p className="l-desc">{open.description}</p>}
         {open.media === 'tv' && open.filters?.tvdbGenre && <p className="l-desc">{`${label(TVDB_CATS, open.filters.tvdbGenre)} shows from `}<a href="https://thetvdb.com" target="_blank" rel="noopener noreferrer">TheTVDB.com</a></p>}
-        {open.kind === 'smart' && open.filters && <Chips media={open.media!} f={open.filters} />}
       </div>
       {/* someone else's shared list: follow it onto your Lists page, or copy it to make it yours */}
       {!open.mine ? <div className="pk-set l-hacts">
@@ -183,7 +182,7 @@ export function ListPage({ id }: { id: string }) {
   return (
     <ShelfWrap reload={reload}>
       <div className="shelf">
-        <ShelfGrid title={builtin ? open.name : undefined} head={head} items={open.items} first={FIRST[open.id] || (open.kind === 'smart' ? 'Popular' : 'Added')}
+        <ShelfGrid title={builtin ? open.name : undefined} head={head} sub={open.kind === 'smart' && open.filters ? <Chips media={open.media!} f={open.filters} /> : undefined} items={open.items} first={FIRST[open.id] || (open.kind === 'smart' ? 'Popular' : 'Added')}
           empty={open.kind === 'smart' ? 'Nothing matches these filters: try a wider year, score or genre.' : 'Add titles from any poster’s circle, here or on any page.'} />
       </div>
       <Sheet id="lname" title="EDIT LIST" open={!!naming} from={naming?.from ?? null} onClose={() => setNaming(null)}>

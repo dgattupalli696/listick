@@ -22,8 +22,8 @@ different hosts.
 - `src/server/`: the app's logic.
   - `api.ts`: every `/api/*` route (the page's and the public API `/api/v1/*`: [`api.md`](api.md))
   - `page.ts` (the page's summary, shelves, rows, search), `details.ts` (a title's card), `cards.ts`, `plays.ts`
-  - `lists.ts` (lists and the smart list builder), `athome.ts` and `bluray.ts` (Latest releases), `scores.ts` (other
-    sources' scores for smart lists)
+  - `lists.ts` (lists and the smart list builder), `athome.ts` and `bluray.ts` (Latest releases and Latest shows),
+    `facts.ts` (per-title filter checks), `scores.ts` and `awards.ts` (other sources' scores and awards for smart lists)
   - `rows.ts` (shared and streaming rows), `foryou.ts`, `upnext.ts` (Up next and the calendar), `resume.ts` (Continue
     watching from Jellyfin and Seanime), `stats.ts`, `region.ts`
   - `tracking.ts` and `live.ts` (Stremio turned into plays), `mapping.ts` (Fribb's anime mapping), `titles.ts`, `names.ts`

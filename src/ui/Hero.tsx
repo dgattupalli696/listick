@@ -7,6 +7,7 @@
 // running out its 6 s; on a phone a swipe moves on or back
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getJ } from './lib/api';
+import { CARD_SIZES, srcs } from './lib/format';
 import { cards, type Tile, type TilePatch, type TitleType } from './lib/media';
 import { titleUrl, type Title } from './lib/title';
 import { PosterArt, useOpens } from './Cards';
@@ -79,7 +80,7 @@ export function Hero({ kind }: { kind: TitleType }) {
         if (Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(dy)) { setTrailer(null); setAt((n) => (n + (dx < 0 ? 1 : -1) + items.length) % items.length); }
       }}>
       {items.map((x, n) => drawn(n) && (
-        <img key={x.key} className={`hero-bg${n === at ? ' on' : ''}`} src={wide(x.backdrop)} alt="" decoding="async" />
+        <img key={x.key} className={`hero-bg${n === at ? ' on' : ''}`} src={wide(x.backdrop)} srcSet={srcs(x.backdrop, 'wide')} sizes="100vw" alt="" decoding="async" />
       ))}
       <div className="hero-shade opens" onClick={opens.onClick} onPointerEnter={opens.onPointerEnter} />
       <div className="hero-body" onPointerEnter={() => setHeld(true)} onPointerLeave={() => setHeld(false)}>
@@ -103,7 +104,7 @@ export function Hero({ kind }: { kind: TitleType }) {
         {items.map((x, n) => (
           <button key={x.key} type="button" className={`hero-pick${n === at ? ' on' : ''}`} aria-label={`${n + 1}: ${x.title}`} aria-current={n === at}
             onClick={() => { setTrailer(null); setAt(n); }}>
-            <img src={x.poster || undefined} alt="" loading="lazy" decoding="async" />
+            <img src={x.poster || undefined} srcSet={srcs(x.poster, 'poster')} sizes={CARD_SIZES} alt="" loading="lazy" decoding="async" />
             {n === at && moving && <span className="hero-time"><span /></span>}
           </button>
         ))}

@@ -86,11 +86,21 @@ type Kind = 'movie' | 'tv' | 'anime';
 type GroupKind = Kind | 'anime-movie';
 const GROUPS: Record<string, Record<GroupKind, string[]>> = { everyone: { movie: ['movie-trending', 'movie-popular'], tv: ['tv-trending', 'tv-popular'], anime: ['anime-trending', 'anime-popular'], 'anime-movie': ['anime-movie-trending', 'anime-movie-popular'] },
   kids: { movie: ['kids-movie-trending', 'kids-movie-popular'], tv: ['kids-tv-trending', 'kids-tv-popular'], anime: ['kids-anime-trending', 'kids-anime-popular'], 'anime-movie': [] } };
-// rows of their own, each on its kind's page (in ROWS' order): Movies' In theaters, Box office, New on streaming, Coming soon;
-// TV's New episodes this week, Returning shows, New shows, Premiering soon; Anime's Airing this week, Returning anime, Next season,
-// Top rated
-const ALONE = ['theaters', 'movie-box-office', 'movie-streaming-new', 'movie-coming', 'tv-new-episodes', 'tv-returning', 'tv-new-shows', 'tv-premieres',
+// rows of their own, each on its kind's page (in ROWS' order): Movies' In theaters, New to rent or buy, New on streaming, Coming
+// soon; TV's New episodes this week, Returning shows, New shows, Premiering soon; Anime's Airing this week, Returning anime, Next
+// season, Top rated
+const ALONE = ['theaters', 'movie-rent-new', 'movie-streaming-new', 'movie-coming', 'tv-new-episodes', 'tv-returning', 'tv-new-shows', 'tv-premieres',
   'anime-this-week', 'anime-returning', 'anime-next-season', 'anime-top-rated'];
+// each title once per page (own rows, then Trending & popular); rows under 4 hidden
+const MIN = 4;
+const take = (keys: string[], n: number, seen: Set<string>) => { const out: string[] = []; for (const k of keys) { if (out.length >= n) break; if (!seen.has(k)) { seen.add(k); out.push(k); } } return out; };
+const kindOfRow = (id: string): Kind => { const t = rowType(id); return t === 'series' ? 'tv' : t; };
+// own rows' titles, and what each page shows
+function aloneOf(rows: Awaited<ReturnType<typeof rowsNow>>['rows']) {
+  const seen: Record<Kind, Set<string>> = { movie: new Set(), tv: new Set(), anime: new Set() };
+  const keys = ROWS.filter((x) => ALONE.includes(x.id)).map((r) => ({ r, keys: take(listOf(rows, r.id), r.page, seen[kindOfRow(r.id)]) }));
+  return { keys: keys.filter((x) => x.keys.length >= MIN), seen };
+}
 const kindOf = (k: string | null | undefined): Kind => (k === 'tv' || k === 'anime' ? k : 'movie');
 const groupKindOf = (k: string | null | undefined): GroupKind => (k === 'anime-movie' ? k : kindOf(k));
 // a service has a kind when one of its rows of that kind has titles
@@ -106,8 +116,9 @@ export async function shelves(uid: Uid, p: { group?: string | null; gkind?: stri
   if (p.group != null) {
     const id = GROUPS[p.group] ? p.group : 'everyone', kind = groupKindOf(p.gkind), group = { id, kind, rows: [] as RowCards[] };
     out.group = group;
+    const seen = kind === 'anime-movie' ? new Set<string>() : new Set(aloneOf(rows).seen[kind]);
     for (const r of GROUPS[id][kind].map((rid) => ROWS.find((x) => x.id === rid)!))
-      group.rows.push({ id: r.id, title: r.title, items: await cardsOf(uid, listOf(rows, r.id).slice(0, r.page), wl), total: listOf(rows, r.id).length });
+      group.rows.push({ id: r.id, title: r.title, items: await cardsOf(uid, take(listOf(rows, r.id), r.page, seen), wl), total: listOf(rows, r.id).length });
   }
   if (p.svc != null) {
     // only services with that kind's titles (most have no anime): the picked one, else the first of them
@@ -129,7 +140,7 @@ async function summary(uid: string, query = new URLSearchParams()) {
   // anime: an anime title placed on its TMDB show is a 'tv' title, so the pages tell it by this
   const watchlist = (await viewsOf(uid, saved, wl)).map((v, i) => ({ ...v, addedAt: saved[i].added_at, anime: !!saved[i].anime }));
   const alone: RowCards[] = [];
-  for (const r of ROWS.filter((x) => ALONE.includes(x.id))) alone.push({ id: r.id, kind: rowType(r.id) === 'series' ? 'tv' : rowType(r.id), title: r.title, items: await cardsOf(uid, listOf(rows, r.id).slice(0, r.page), wl), total: listOf(rows, r.id).length });
+  for (const { r, keys } of aloneOf(rows).keys) alone.push({ id: r.id, kind: kindOfRow(r.id), title: r.title, items: await cardsOf(uid, keys, wl), total: listOf(rows, r.id).length });
   return { rows: alone.filter((r) => r.items.length), rowsAt: rows.at,
     watchlist, recent: await recent(uid, 30),
     // kinds: which of movies, shows and anime a service has, so each page offers only the services with its kind

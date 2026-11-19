@@ -4,6 +4,7 @@ import { jobRuns } from "@/db/schema";
 import { collapseDoubles } from "@/server/plays";
 import { refreshDue, reselect } from "@/server/lists";
 import { refreshDiscs } from "@/server/bluray";
+import { refreshAwards } from "@/server/awards";
 import { checkDue } from "@/server/scores";
 import { fillAnimeGenres } from "@/server/animegenres";
 import { fillRuntimes } from "@/server/stats";
@@ -63,6 +64,8 @@ const allJobs: Job[] = [
   { name: "lists", everyMs: 15 * 60_000, run: refreshDue },
   // smart lists picking by other sources' scores: their candidates checked a few at a time
   { name: "scores", everyMs: 10 * 60_000, run: () => checkDue(reselect) },
+  // awards: weekly
+  { name: "awards", everyMs: 6 * 3600_000, run: refreshAwards },
   // anime's own genres (MyAnimeList's, else Kitsu's) in place of TMDB's loose ones, 150 titles a run
   { name: "anime-genres", everyMs: 3600_000, run: () => fillAnimeGenres() },
   // Stats' hours: the runtime of each title you've watched, asked once
