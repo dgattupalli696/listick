@@ -17,7 +17,7 @@ import { comingTag, continueItems, historyItems, planItems, setFetchedAt, type R
 import { Group } from './Rail';
 import { TitlePanel, type TitlePanelApi } from './Title';
 
-const wideKey = (w: Wide) => `${w.ref ? JSON.stringify(w.ref) : w.title}|${w.sub}|${w.pct ?? ''}`;
+const wideKey = (w: Wide) => `${w.ref ? JSON.stringify(w.ref) : w.title}|${w.sub}|${w.pct ?? ''}|${w.at ?? ''}`;
 const tileKey = (t: Tile) => t.key;
 const moreOf = (r: Row) => (r.total && r.total > r.items.length ? { id: r.id, total: r.total, batch: r.items.length } : null);
 const trend = (t: Tile) => <TrendCard t={t} />;

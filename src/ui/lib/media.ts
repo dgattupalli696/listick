@@ -20,7 +20,7 @@ type StContinue = StCard & { pct: number; resume?: boolean; video?: string | nul
   place?: { key: string; type: TitleType; se: number; ep: number; title: string; poster: string | null; backdrop: string | null } | null };
 type UpNext = { key: string; type: TitleType; title: string; poster: string | null; backdrop: string | null; se: number; ep: number; at: number; airedAt: number | null; rewatch?: boolean; returning?: boolean };
 export type AirEp = { key: string; title: string; poster: string | null; season: number | null; ep: number; at: number; dayOnly: boolean; watched: boolean; anime: boolean };
-type Play = { key: string; type: TitleType; title: string; poster: string | null; backdrop: string | null; at: number; season: number; episode: number; from?: number; mine?: number | null; source: string };
+type Play = { key: string; type: TitleType; title: string; poster: string | null; backdrop: string | null; at: number; season: number; episode: number; mine?: number | null; source: string };
 type Planned = { key: string; type: TitleType; title: string; poster: string | null; backdrop: string | null; addedAt: number; label?: string | null; year?: number | null; anime?: boolean };
 export type Summary = {
   stremio?: { continue?: StContinue[]; history?: StCard[] } | null;
@@ -36,7 +36,7 @@ export type Ref = { key: string } | { imdb: string };
 export type Wide = { app: string; ref: Ref | null; ids?: string[]; title: string; poster: string | null; wide: string | null; url?: string; at: number;
   sub: string; pct?: number; airedAt?: number; isNew?: boolean; watching?: boolean; resume?: boolean; rewatch?: boolean; returning?: boolean;
   cw?: { id: string; video?: string | null; at: number; key?: string; se?: number; ep?: number; movie: boolean } | null;
-  play?: { key: string; season: number; episode: number; mine?: number | null; grouped?: boolean } };
+  play?: { key: string; season: number; episode: number; mine?: number | null } };
 
 export const APP_NAME: Record<string, string> = { listick: 'Listick', stremio: 'Stremio', jellyfin: 'Jellyfin', seanime: 'Seanime', anilist: 'AniList', tmdb: 'TMDB', kitsu: 'Kitsu', manual: 'Marked by you', imported: 'Past history' };
 export const TYPE_NAME: Record<TitleType, string> = { movie: 'Movie', tv: 'TV', anime: 'Anime' };
@@ -73,14 +73,14 @@ export function continueItems(S: Summary) {
   out.sort((a, b) => Number(!!b.watching) - Number(!!a.watching));
   return oneCardPerTitle(out).slice(0, 15).map((w) => ({ ...w, isNew: !w.watching && !!w.airedAt && Date.now() - w.airedAt < 4 * 86400000 }));
 }
-// History: from our own database (every play, last 30 days, one card per title); the live sources only if the media
+// History: from our own database (the last 15 plays, 30 days); the live sources only if the media
 // service is unreachable. Imported past data (Trakt, MDBList) was watched in Stremio, so it shows Stremio's logo; new plays
 // carry their real source
 const SOURCE_APP: Record<string, string> = { stremio: 'stremio', anilist: 'anilist', jellyfin: 'jellyfin', seanime: 'seanime', manual: 'manual', trakt: 'stremio', mdblist: 'stremio' };
 export function historyItems(S: Summary) {
-  if (S.media?.recent) return oneCardPerTitle(S.media.recent.map((h) => ({ app: SOURCE_APP[h.source] || 'imported', ref: { key: h.key }, title: h.title,
-    poster: h.poster, wide: h.backdrop, at: h.at, play: { key: h.key, season: h.season, episode: h.episode, mine: h.mine, grouped: h.from != null && h.from < h.episode },
-    sub: `${h.type === 'movie' ? 'Movie' : h.season >= 0 ? `${h.type === 'anime' ? '' : `S${h.season} `}E${h.from != null && h.from < h.episode ? `${h.from}–${h.episode}` : h.episode}` : ''} · ${ago(h.at)} ago` })));
+  if (S.media?.recent) return S.media.recent.map((h) => ({ app: SOURCE_APP[h.source] || 'imported', ref: { key: h.key }, title: h.title,
+    poster: h.poster, wide: h.backdrop, at: h.at, play: { key: h.key, season: h.season, episode: h.episode, mine: h.mine },
+    sub: `${h.type === 'movie' ? 'Movie' : h.season >= 0 ? `${h.type === 'anime' ? '' : `S${h.season} `}E${h.episode}` : ''} · ${ago(h.at)} ago` }));
   const out: Wide[] = [];
   for (const h of S.stremio?.history || []) out.push({ app: 'stremio', ref: imdbRef(h.id), title: h.title, poster: h.poster, wide: stremioWide(h.id), url: h.url, at: h.at,
     sub: `${h.type === 'movie' ? 'Movie' : epLabel(h)} · ${ago(h.at)} ago` });

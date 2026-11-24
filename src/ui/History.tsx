@@ -28,26 +28,14 @@ const whenOf = (t: number) => {
     date: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }), year: d.getFullYear() };
 };
 
-// a day's plays as posters; a back-to-back run is one card
+// a day's plays
 type Shown = { w: Wide; ep: string; time: string };
-function cardsOf(plays: Play[]): Shown[] {
-  const out: Shown[] = [];
-  for (let i = 0; i < plays.length; i++) {
-    const p = plays[i];
-    let from = p.episode, j = i;
-    while (p.type !== 'movie' && p.season >= 0) {
-      const n = plays[j + 1];
-      if (!n || n.key !== p.key || n.season !== p.season || n.episode !== from - 1 || plays[j].at - n.at > 3 * 3600000) break;
-      from = n.episode; j++;
-    }
-    const ep = p.type === 'movie' ? 'Movie' : p.season >= 0 ? `${p.type === 'anime' ? '' : `S${p.season} `}E${from < p.episode ? `${from}–${p.episode}` : p.episode}` : '';
-    const time = p.approx === 1 ? 'date unknown' : hhmm(p.at);
-    out.push({ ep, time, w: { app: APP[p.source] || 'imported', ref: { key: p.key }, title: p.title, poster: p.poster, wide: null, at: p.at,
-      play: { key: p.key, season: p.season, episode: p.episode, mine: p.mine, grouped: from < p.episode }, sub: `${ep} · ${time}` } });
-    i = j;
-  }
-  return out;
-}
+const cardsOf = (plays: Play[]): Shown[] => plays.map((p) => {
+  const ep = p.type === 'movie' ? 'Movie' : p.season >= 0 ? `${p.type === 'anime' ? '' : `S${p.season} `}E${p.episode}` : '';
+  const time = p.approx === 1 ? 'date unknown' : hhmm(p.at);
+  return { ep, time, w: { app: APP[p.source] || 'imported', ref: { key: p.key }, title: p.title, poster: p.poster, wide: null, at: p.at,
+    play: { key: p.key, season: p.season, episode: p.episode, mine: p.mine }, sub: `${ep} · ${time}` } };
+});
 
 type Period = 'month' | 'year' | 'all';
 const PERIODS = [['month', 'Month', PATHS.cal], ['year', 'Year', 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4M8 14h2M12 14h2M16 14h2M8 17h2'],

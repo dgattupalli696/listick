@@ -258,7 +258,7 @@ export function HistCard({ w }: { w: Wide }) {
     setMine(n || 0); reset(); reload(800);
   };
   const ring = useRingRate({ cur: () => mine, show: (v) => { ask.disarm(); setView(v); }, reset, save, confirm: ask.tap, dragging: setDragging });
-  if (!p || p.grouped) return <WideCard w={w} />;
+  if (!p) return <WideCard w={w} />;
   const v = view ?? mine;
   return (
     <WideCard w={w} cls={dragging ? ' dragging' : ''}>
