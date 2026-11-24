@@ -3,9 +3,10 @@
 // their refresh says. Plan to watch, Watched and Rated are the built-in lists beside them. Every list is also offered to the
 // Stremio addon (catalogs.ts reads it as list.<id>).
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import { cardsOf } from './cards';
 import { q } from './db';
-import { CONCERTS, KIND_GENRES, SHORTS, STANDUP, asksFacts, factsOf, fits as factsFit } from './facts';
+import { CONCERTS, KIND_GENRES, SHORTS, STANDUP, asksFacts, factsOf, fits as factsFit, type Collection } from './facts';
 import { options, prefsOf } from './region';
 import { known, scored, verdict, warm, type ScoreRule } from './scores';
 import { homeReleases, showReleases, type Airing, type Home } from './athome';
@@ -33,12 +34,15 @@ export type Filters = {
   airing?: Airing[];
   genres?: string[]; without?: string[]; match?: 'any' | 'all';
   // when: a window that moves with each refresh, or years (yearFrom, yearTo); decades: their first years, any number of them
-  when?: 'any' | '30d' | '6m' | 'year' | 'next3' | 'years'; yearFrom?: number; yearTo?: number; decades?: number[];
+  // season, lastSeason, nextSeason: anime's seasons (calendar quarters: winter January–March, …)
+  when?: 'any' | '30d' | '6m' | 'year' | 'next3' | 'years' | 'season' | 'lastSeason' | 'nextSeason'; yearFrom?: number; yearTo?: number; decades?: number[];
   runtimeFrom?: number; runtimeTo?: number; released?: 'out' | 'coming' | 'both'; cert?: string;
+  // the age ratings let in: films', shows'
+  certs?: string[]; tvCerts?: string[];
   out?: Release[]; status?: number[]; type?: number[];
   scoreFrom?: number; scoreTo?: number; votes?: number; votesTo?: number;
-  // region: the list's country (release dates, age ratings, services); reach: titles released there (shows: made there), on its
-  // services, or anywhere; services: TMDB provider ids (older lists: Listick's service ids); my: the user's own services instead
+  // region: the list's country (release dates, age ratings, services); reach: films released there (older lists' streaming:
+  // on a subscription there, as watch flatrate); services: TMDB provider ids (older lists: Listick's service ids); my: the user's own services instead
   region?: string; reach?: 'released' | 'streaming' | 'anywhere'; services?: (number | string)[]; my?: boolean;
   // TMDB monetization types, any of them
   watch?: Watch[];
@@ -48,8 +52,13 @@ export type Filters = {
   // languages and countries left out
   languagesOut?: string[]; countriesOut?: string[];
   // TMDB keywords, cast, crew (directors, writers), studios and networks; a keyword or studio with out is left out. Cast and crew
-  // are films' only (TMDB's show search ignores them), networks shows' only
-  mood?: string; keywords?: Picked[]; cast?: Picked[]; castMatch?: 'any' | 'all'; crew?: Picked[]; companies?: Picked[]; networks?: number[];
+  // are films' only (TMDB's show search ignores them), networks shows' only (older lists: ids, included)
+  mood?: string; keywords?: Picked[]; kwMatch?: 'any' | 'all'; cast?: Picked[]; castMatch?: 'any' | 'all'; crew?: Picked[]; companies?: Picked[]; networks?: (number | Picked)[];
+  // films: in a collection, not, its first film, a later one; any kind: has a trailer (both checked per title, facts.ts)
+  collection?: Collection; trailer?: boolean;
+  // films: TMDB collections (a franchise) in or out (in: the list is made of their films), budget and box office floors (USD),
+  // TMDB's status (Released, In Production, Post Production, Planned, Rumored, Canceled)
+  collections?: Picked[]; budgetFrom?: number; revenueFrom?: number; movieStatus?: string[];
   hideWatched?: boolean; hidePlan?: boolean; onlyRated?: boolean;
   // your library (TMDB can't tell): titles you rated within myFrom–myTo, watched this year, over a year ago, or shows started and
   // not finished. Either makes the list from your library instead, with the filters titles carry here (kind, genres, years,
@@ -59,6 +68,7 @@ export type Filters = {
   tvdbGenre?: number;
 } & ScoreRule;
 type Picked = { id: number; name: string; out?: boolean };
+const netsOf = (l: (number | Picked)[] | undefined): Picked[] => (l || []).map((x) => (typeof x === 'number' ? { id: x, name: '' } : x));
 type Watch = 'flatrate' | 'free' | 'ads' | 'rent' | 'buy';
 const WATCH: Watch[] = ['flatrate', 'free', 'ads', 'rent', 'buy'];
 type Row = { id: string; user_id: string; name: string; description: string | null; kind: 'manual' | 'smart'; media: Media | null; filters: Filters | null;
@@ -70,7 +80,8 @@ const MOVIE_G: Record<string, number> = { Action: 28, Adventure: 12, Animation: 
 const TV_G: Record<string, number> = { Action: 10759, Adventure: 10759, Animation: 16, Comedy: 35, Crime: 80, Documentary: 99, Drama: 18, Family: 10751,
   Fantasy: 10765, Kids: 10762, Mystery: 9648, Reality: 10764, 'Sci-Fi': 10765, War: 10768, Western: 37, Romance: 10749 };
 // anime's own genres that TMDB has no genre for: its keywords instead
-const ANIME_KW: Record<string, number> = { Isekai: 237451, Mecha: 10046, Psychological: 272553, School: 10873, 'Slice of Life': 9914, Sports: 6075, Supernatural: 6152 };
+const ANIME_KW: Record<string, number> = { Isekai: 237451, Mecha: 10046, Psychological: 272553, School: 10873, 'Slice of Life': 9914, Sports: 6075, Supernatural: 6152,
+  Shounen: 207826, Seinen: 195668, Shoujo: 206437, Josei: 229074, Iyashikei: 291483, Idol: 287664, Harem: 9194, 'Magical girl': 292887, 'Martial arts': 779 };
 const ANIME_G = ['Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy', 'Mystery', 'Romance', 'Sci-Fi', 'Family', ...Object.keys(ANIME_KW)];
 const GENRES: Record<Media, string[]> = { movie: [...Object.keys(MOVIE_G), ...KIND_GENRES], tv: Object.keys(TV_G).filter((g) => g !== 'Animation'),
   anime: ANIME_G, animefilm: [...ANIME_G, SHORTS], both: [...Object.keys(MOVIE_G).filter((g) => g in TV_G), ...KIND_GENRES] };
@@ -85,11 +96,16 @@ const plus = (days: number) => day(new Date(Date.now() + days * 86400000));
 
 // the date windows a list asks for: when (moving, or its years), each of its decades within that (none: one open window)
 type Window = { gte?: string; lte?: string };
+// an anime season's dates: this quarter, the one before (-1) or after (1)
+export function season(by: number, now = new Date()): Window {
+  const q = Math.floor(now.getUTCMonth() / 3) + by, from = new Date(Date.UTC(now.getUTCFullYear(), q * 3, 1)), to = new Date(Date.UTC(now.getUTCFullYear(), q * 3 + 3, 0));
+  return { gte: day(from), lte: day(to) };
+}
 function windows(f: Filters): Window[] {
   const y = new Date().getFullYear(), today = day(new Date());
   const when = f.when || (f.yearFrom || f.yearTo ? 'years' : 'any');
   const w: Window = when === '30d' ? { gte: plus(-30), lte: today } : when === '6m' ? { gte: plus(-182), lte: today } : when === 'year' ? { gte: `${y}-01-01`, lte: `${y}-12-31` }
-    : when === 'next3' ? { gte: today, lte: plus(92) } : when === 'years' ? { gte: f.yearFrom ? `${f.yearFrom}-01-01` : undefined, lte: f.yearTo ? `${f.yearTo}-12-31` : undefined } : {};
+    : when === 'next3' ? { gte: today, lte: plus(92) } : when === 'season' || when === 'lastSeason' || when === 'nextSeason' ? season(when === 'season' ? 0 : when === 'lastSeason' ? -1 : 1) : when === 'years' ? { gte: f.yearFrom ? `${f.yearFrom}-01-01` : undefined, lte: f.yearTo ? `${f.yearTo}-12-31` : undefined } : {};
   if (f.released === 'out' && (!w.lte || w.lte > today)) w.lte = today;
   if (f.released === 'coming' && (!w.gte || w.gte < today)) w.gte = today;
   if (!f.decades?.length) return [w];
@@ -110,10 +126,9 @@ function discoverPath(type: 'movie' | 'tv', anime: boolean, f: Filters, w: Windo
   if (inc.length) q.set('with_genres', [...new Set(inc)].join(join));
   if (out.length) q.set('without_genres', out.join(','));
   const region = /^[A-Z]{2}$/.test(f.region || '') ? f.region! : 'US', released = f.reach === 'released';
-  // a film's release in that country (released there, or how it came out): its dates are the country's own; a show made there
+  // a film's release in that country (released there, or how it came out): its dates are the country's own
   const kinds = movie && f.out?.length ? f.out.map((k) => RELEASE[k]).filter(present).join('|') : movie && released ? '2|3|4|5|6' : '';
   if (kinds) { q.set('region', region); q.set('with_release_type', kinds); }
-  if (released && !movie && !f.countries?.length && !f.country) q.set('with_origin_country', region);
   const from = kinds ? 'release_date' : movie ? 'primary_release_date' : 'first_air_date';
   if (w.gte) q.set(`${from}.gte`, w.gte);
   if (w.lte) q.set(`${from}.lte`, w.lte);
@@ -124,6 +139,8 @@ function discoverPath(type: 'movie' | 'tv', anime: boolean, f: Filters, w: Windo
   if (f.runtimeFrom) q.set('with_runtime.gte', String(f.runtimeFrom));
   if (f.runtimeTo) q.set('with_runtime.lte', String(f.runtimeTo));
   if (movie && f.cert) { q.set('certification_country', region); q.set('certification.lte', f.cert); }
+  if (movie && f.certs?.length) { q.set('certification_country', region); q.set('certification', f.certs.join('|')); }
+  if (!movie && f.tvCerts?.length) { q.set('certification_country', region); q.set('certification', f.tvCerts.join('|')); }
   if (f.scoreFrom) q.set('vote_average.gte', String(f.scoreFrom));
   if (f.scoreTo) q.set('vote_average.lte', String(f.scoreTo));
   // A–Z, oldest and top rated would open on titles hardly anyone has seen without a few votes
@@ -144,13 +161,15 @@ function discoverPath(type: 'movie' | 'tv', anime: boolean, f: Filters, w: Windo
   // an anime's own genres go in as keywords (with the genres' any or all), beside the keywords picked
   const kw = (names: string[] | undefined) => (anime ? (names || []).map((g) => ANIME_KW[g]).filter(present) : []);
   const withKw = [...kw(f.genres), ...picked(f.keywords, false)], withoutKw = [...kw(f.without), ...picked(f.keywords, true)];
-  if (withKw.length) q.set('with_keywords', withKw.join(kw(f.genres).length && f.match === 'all' ? ',' : '|'));
+  // anime genres any, keywords all: any here, keywords checked per title (runSmart)
+  const all = kw(f.genres).length ? f.match === 'all' : f.kwMatch === 'all';
+  if (withKw.length) q.set('with_keywords', withKw.join(all ? ',' : '|'));
   if (withoutKw.length) q.set('without_keywords', withoutKw.join(','));
   if (picked(f.companies, false).length) q.set('with_companies', picked(f.companies, false).join('|'));
   if (picked(f.companies, true).length) q.set('without_companies', picked(f.companies, true).join(','));
   if (movie && picked(f.cast, false).length) q.set('with_cast', picked(f.cast, false).join(f.castMatch === 'all' ? ',' : '|'));
   if (movie && picked(f.crew, false).length) q.set('with_crew', picked(f.crew, false).join('|'));
-  if (!movie && f.networks?.length) q.set('with_networks', f.networks.filter(Number.isInteger).join('|'));
+  if (!movie && picked(netsOf(f.networks), false).length) q.set('with_networks', picked(netsOf(f.networks), false).join('|'));
   return `/discover/${type}?${q}`;
 }
 // every query a list runs: its kind's (movies and shows: both) for each date window
@@ -172,14 +191,14 @@ async function widen(f: Filters): Promise<Filters> {
 }
 // the list's filters as TMDB search terms, for Latest releases
 function homeQuery(f: Filters, media: Media, mine: number[], type: 'movie' | 'tv' = 'movie') {
-  const all = { ...f, sort: undefined, when: undefined, yearFrom: undefined, yearTo: undefined, decades: undefined, released: undefined, out: undefined, reach: undefined };
+  const all = { ...f, sort: undefined, when: undefined, yearFrom: undefined, yearTo: undefined, decades: undefined, released: undefined, out: undefined, reach: type === 'tv' ? f.reach : undefined };
   const p = new URL(discoverPath(type, media === 'animefilm' || media === 'anime', all, {}, mine), 'https://x').searchParams;
   p.delete('include_adult'); p.delete('sort_by');
   if (p.get('vote_count.gte') === '0') p.delete('vote_count.gte');
   return p;
 }
 // a library list's candidates: your rated and/or watched titles that fit, in the list's order (popular: what you did last first)
-const library = (f: Filters) => !!(f.myFrom || f.myTo || f.watched || f.home?.length || f.airing?.length);
+const library = (f: Filters) => !!(f.myFrom || f.myTo || f.watched || f.home?.length || f.airing?.length || f.collections?.some((x) => !x.out));
 // library switches
 async function libraryRules(uid: string, f: Filters) {
   const hide = new Set<string>();
@@ -189,6 +208,11 @@ async function libraryRules(uid: string, f: Filters) {
   return (k: string) => !hide.has(k) && (!rated || rated.has(k));
 }
 const WITHIN = [30, 90, 180, 365];
+// New releases' digital kinds narrowed by Available as (watch): rent or buy, subscription (free and ads count as it)
+const homeKinds = (f: Filters): Home[] => {
+  const w = f.watch || [], rent = w.some((x) => x === 'rent' || x === 'buy'), sub = w.some((x) => x !== 'rent' && x !== 'buy');
+  return (f.home || []).filter((k) => !w.length || (k === 'digital' ? rent : k === 'streaming' ? sub : true));
+};
 async function libraryPool(uid: string, media: Media, f: Filters) {
   const sets: Map<string, number>[] = [];   // key -> when you last rated or watched it
   const mine = new Map<string, number>();
@@ -206,10 +230,16 @@ async function libraryPool(uid: string, media: Media, f: Filters) {
       : await q.all<{ key: string; at: number }>(`select key, max(watched_at) at from history where user_id = ? group by key having max(watched_at) ${f.watched === 'year' ? '>=' : '<'} ?`, uid, f.watched === 'year' ? y : ago);
     sets.push(new Map(rows.map((r) => [r.key, r.at])));
   }
-  if (f.home?.length) sets.push(await homeReleases(/^[A-Z]{2}$/.test(f.region || '') ? f.region! : 'US', f.home, WITHIN.includes(f.homeWithin!) ? f.homeWithin! : 90, !!f.homeCinema,
+  if (f.home?.length) sets.push(await homeReleases(/^[A-Z]{2}$/.test(f.region || '') ? f.region! : 'US', homeKinds(f), WITHIN.includes(f.homeWithin!) ? f.homeWithin! : 90, !!f.homeCinema,
     homeQuery(f, media, f.my ? (await prefsOf(uid)).services : [])));
   if (f.airing?.length) sets.push(await showReleases(f.airing, WITHIN.includes(f.homeWithin!) ? f.homeWithin! : 90,
     homeQuery(f, media, f.my ? (await prefsOf(uid)).services : [], 'tv')));
+  // shortcut: Where to watch isn't applied to franchise lists; add it if needed
+  for (const c of (f.collections || []).filter((x) => !x.out && Number.isInteger(x.id))) {
+    const parts = (await tmdb<{ parts?: TmdbPage['results'] }>(`/collection/${c.id}`).catch(() => null))?.parts || [];
+    const day = new Map(parts.map((p) => [`tmdb:movie:${p.id}`, Date.parse(p.release_date || '') || 0]));
+    sets.push(new Map((await saveTitles(parts.filter((p) => p.poster_path).map(fromTmdb('movie')))).map((t) => [t.key, day.get(t.key) || 0])));
+  }
   const at = sets.reduce((a, b) => new Map([...a].filter(([k]) => b.has(k))));
   // extra genres: checked by facts
   const real = (g: string) => !KIND_GENRES.includes(g), inc = (f.genres || []).filter(real), out = (f.without || []).filter(real);
@@ -245,8 +275,10 @@ async function runSmart(uid: string, media: Media, asked: Filters) {
   const want = checked ? Math.min(600, Math.max(max, max * 5)) : f.sort === 'shuffle' ? Math.min(600, Math.max(max, max * 3)) : max;
   // checked per title: cast or crew left out, extra genres, countries left out
   const kinds = { genres: f.genres, without: f.without };
-  const allowed = await libraryRules(uid, f), each = [...f.cast || [], ...f.crew || []].some((x) => x.out) || !!f.countriesOut?.length
-    || (media !== 'tv' && media !== 'anime' && asksFacts(kinds));
+  const mixedKw = f.kwMatch === 'all' && f.match !== 'all' && (media === 'anime' || media === 'animefilm') && !!f.genres?.length;
+  const allowed = await libraryRules(uid, f), each = [...f.cast || [], ...f.crew || [], ...netsOf(f.networks)].some((x) => x.out) || !!f.countriesOut?.length
+    || (media !== 'tv' && media !== 'anime' && asksFacts(kinds)) || !!f.collection || !!f.trailer || mixedKw
+    || (media !== 'tv' && media !== 'anime' && !!(f.collections?.length || f.budgetFrom || f.revenueFrom || f.movieStatus?.length));
   if (f.tvdbGenre && media === 'tv' && tvdbOn()) {
     const found = await tvdbCategory(f.tvdbGenre, { sort: f.sort, language: f.languages?.[0] || f.language, country: f.countries?.[0] || f.country, want: Math.min(600, want * 2) });
     const pool = found.filter(allowed).slice(0, want);
@@ -265,7 +297,9 @@ async function runSmart(uid: string, media: Media, asked: Filters) {
       const ts = await saveTitles(d.results.filter((r) => r.poster_path && (x.anime ? r.genre_ids?.includes(16) : !(r.original_language === 'ja' && r.genre_ids?.includes(16))))
         .map(fromTmdb(x.type)));
       const facts = each ? await factsOf(ts.map((t) => t.key)) : null;
-      for (const t of ts) if (allowed(t.key) && (!facts || factsFit({ cast: f.cast, crew: f.crew, countriesOut: f.countriesOut, ...kinds }, facts.get(t.key)))) x.keys.push(t.key);
+      for (const t of ts) if (allowed(t.key) && (!facts || factsFit({ cast: f.cast, crew: f.crew, countriesOut: f.countriesOut, collection: f.collection, trailer: f.trailer, networks: f.networks,
+        collections: f.collections, budgetFrom: f.budgetFrom, revenueFrom: f.revenueFrom, movieStatus: f.movieStatus,
+        ...(mixedKw ? { keywords: f.keywords, kwMatch: f.kwMatch } : {}), ...kinds }, facts.get(t.key)))) x.keys.push(t.key);
       if (page >= Math.min(d.total_pages || 1, 500)) x.done = true;
     }
   }
@@ -276,7 +310,8 @@ async function runSmart(uid: string, media: Media, asked: Filters) {
 async function pick(pool: string[], f: Filters) {
   let keys = pool, pending = 0;
   if (scored(f)) {
-    const have = await known(pool), v = pool.map((k) => verdict(have.get(k), f));
+    const have = await known(pool), ts = f.avg || f.avgTo ? await titlesOf(pool) : null;
+    const v = pool.map((k) => verdict({ ...have.get(k), tmdb: ts?.get(k)?.rating ?? null }, f));
     keys = pool.filter((_, i) => v[i] === 'pass'); pending = v.filter((x) => x === 'pending').length;
   }
   if (f.sort === 'shuffle') { keys = [...keys]; for (let i = keys.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [keys[i], keys[j]] = [keys[j], keys[i]]; } }
@@ -419,7 +454,7 @@ export const deleteList = (uid: string, id: string) => q.run('delete from lists 
 // finds leave as new ones come; changed filters start it over
 const sizeOf = (f: Filters) => Math.min(500, Math.max(10, f.max || 60));
 // moving windows: When (30 days, 6 months, this year, next 3 months) or Latest releases
-const moving = (f: Filters) => !!f.home?.length || ['30d', '6m', 'year', 'next3'].includes(f.when || '');
+const moving = (f: Filters) => !!f.home?.length || ['30d', '6m', 'year', 'next3', 'season', 'lastSeason', 'nextSeason'].includes(f.when || '');
 const merged = (found: string[], had: string[] | null, f: Filters) => [...new Set([...found, ...(moving(f) ? [] : had || [])])].slice(0, sizeOf(f));
 export async function refreshList(uid: string, id: string, over = false) {
   const l = await listRow(uid, id);
@@ -479,12 +514,41 @@ export async function refreshDue() {
   if (rows.length) console.log(`lists: ${rows.length} smart lists refreshed`);
 }
 // the builder's searches: TMDB keywords, people (cast, crew) and studios by name
+// every TV network, from TMDB's daily export, kept a week; each one found looked up once for its country and logo
+let networks: { at: number; v: [number, string][] } | null = null;
+const networkInfo = new Map<number, { origin_country?: string; logo_path?: string | null }>();
+async function networkList() {
+  if (networks && Date.now() - networks.at < HOUR) return networks.v;
+  const kept = await metaGet<{ at: number; v: [number, string][] }>('tmdb-networks');
+  if (kept && Date.now() - kept.at < 7 * 24 * HOUR) return (networks = { at: Date.now(), v: kept.v }).v;
+  for (const back of [1, 2, 3]) {
+    const d = new Date(Date.now() - back * 24 * HOUR), day = `${String(d.getUTCMonth() + 1).padStart(2, '0')}_${String(d.getUTCDate()).padStart(2, '0')}_${d.getUTCFullYear()}`;
+    const res = await fetch(`https://files.tmdb.org/p/exports/tv_network_ids_${day}.json.gz`, { signal: AbortSignal.timeout(30000) }).catch(() => null);
+    if (!res?.ok) continue;
+    const v = zlib.gunzipSync(Buffer.from(await res.arrayBuffer())).toString().split('\n').filter(Boolean)
+      .map((l) => JSON.parse(l) as { id: number; name: string }).map((x): [number, string] => [x.id, x.name]);
+    await metaSet('tmdb-networks', { at: Date.now(), v });
+    return (networks = { at: Date.now(), v }).v;
+  }
+  return kept?.v || [];
+}
+async function networkSearch(text: string) {
+  const t = text.toLowerCase(), rank = (n: string) => (n.toLowerCase() === t ? 0 : n.toLowerCase().startsWith(t) ? 1 : 2);
+  const hits = (await networkList()).filter(([, n]) => n.toLowerCase().includes(t)).sort((a, b) => rank(a[1]) - rank(b[1]) || a[0] - b[0]).slice(0, 10);
+  return Promise.all(hits.map(async ([id, name]) => {
+    if (!networkInfo.has(id)) networkInfo.set(id, await tmdb<{ origin_country?: string; logo_path?: string | null }>(`/network/${id}`).catch(() => ({})));
+    const i = networkInfo.get(id)!;
+    return { id, name, sub: i.origin_country || null, image: i.logo_path ? `https://image.tmdb.org/t/p/w92${i.logo_path}` : null };
+  }));
+}
+
 export async function pickSearch(kind: string, text: string) {
-  if (!['keyword', 'person', 'company'].includes(kind) || text.trim().length < 2) return [];
-  type R = { id: number; name: string; known_for_department?: string; profile_path?: string | null; logo_path?: string | null; origin_country?: string };
+  if (!['keyword', 'person', 'company', 'network', 'collection'].includes(kind) || text.trim().length < 2) return [];
+  if (kind === 'network') return networkSearch(text.trim());
+  type R = { id: number; name: string; known_for_department?: string; profile_path?: string | null; logo_path?: string | null; poster_path?: string | null; origin_country?: string };
   const r = await tmdb<{ results: R[] }>(`/search/${kind}?query=${encodeURIComponent(text.trim())}&include_adult=false`);
   return r.results.slice(0, 10).map((x) => ({ id: x.id, name: x.name, sub: x.known_for_department || x.origin_country || null,
-    image: x.profile_path || x.logo_path ? `https://image.tmdb.org/t/p/w92${x.profile_path || x.logo_path}` : null }));
+    image: x.profile_path || x.logo_path || x.poster_path ? `https://image.tmdb.org/t/p/w92${x.profile_path || x.logo_path || x.poster_path}` : null }));
 }
 // your lists shown as rows (Home, and a smart one's kind's page too): each one's first 20 titles as cards
 export async function rowLists(uid: string) {

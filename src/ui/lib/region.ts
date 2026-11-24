@@ -2,7 +2,7 @@
 export type Country = { id: string; name: string };
 export type Service = { id: number; name: string; logo: string | null };
 export type Prefs = { countries: Country[]; country: string | null; services: number[]; lang: string | null };
-export type RegionInfo = { services: Service[]; certs: string[] };
+export type RegionInfo = { services: Service[]; certs: string[]; tvCerts?: string[] };
 
 // a user who hasn't picked one starts with the region part of the browser's languages (fi-FI → FI), else the US
 export function guessCountry() {

@@ -7,7 +7,7 @@ import { Icon, PATHS } from './lib/icons';
 
 export type Picked = { id: number; name: string; out?: boolean };
 type Hit = { id: number; name: string; sub: string | null; image: string | null };
-export function SearchPick({ kind, label, value, set }: { kind: 'keyword' | 'person' | 'company'; label: string; value: Picked[]; set: (v: Picked[]) => void }) {
+export function SearchPick({ kind, label, value, set }: { kind: 'keyword' | 'person' | 'company' | 'network' | 'collection'; label: string; value: Picked[]; set: (v: Picked[]) => void }) {
   const [text, setText] = useState(''), [hits, setHits] = useState<Hit[] | null>(null), box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const want = text.trim();

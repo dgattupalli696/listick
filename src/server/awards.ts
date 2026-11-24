@@ -1,17 +1,20 @@
 // Awards for smart lists: wins and nominations (a nomination includes a win) at the Oscars, Primetime Emmys, Golden Globes,
-// BAFTA, Cannes and any award, from Wikidata (meta 'awards', weekly) and OMDb; bits per title in title_scores (source 'awards')
+// BAFTA, Cannes, any award, Razzies and Best Picture, from Wikidata (meta 'awards', weekly) and OMDb; bits per title in title_scores (source 'awards')
+import { q } from './db';
 import { metaGet, metaSet } from './store';
 import { getJSON } from './sources';
 import { HOUR } from './util';
 
-export const AWARDS = ['oscar', 'emmy', 'globe', 'bafta', 'cannes', 'any'] as const;
+// new ones last
+export const AWARDS = ['oscar', 'emmy', 'globe', 'bafta', 'cannes', 'any', 'razzie', 'picture'] as const;
 type Award = (typeof AWARDS)[number];
 // an award's bit
 export const bitOf = (a: string) => { const [k, l] = a.split('-'), i = AWARDS.indexOf(k as Award); return i < 0 || (l !== 'won' && l !== 'nom') ? 0 : 1 << (i * 2 + (l === 'won' ? 0 : 1)); };
 const both = (k: Award) => bitOf(`${k}-won`) | bitOf(`${k}-nom`);
 
 // each award's categories on Wikidata
-const FAMILY: [Exclude<Award, 'any' | 'cannes'>, string][] = [['oscar', 'wd:Q19020'], ['emmy', 'wd:Q1044427'], ['globe', 'wd:Q1011547'], ['bafta', 'wd:Q732997'], ['bafta', 'wd:Q1369077']];
+const FAMILY: [Exclude<Award, 'any' | 'cannes' | 'picture'>, string][] = [['oscar', 'wd:Q19020'], ['emmy', 'wd:Q1044427'], ['globe', 'wd:Q1011547'], ['bafta', 'wd:Q732997'], ['bafta', 'wd:Q1369077'],
+  ['razzie', 'wd:Q40237']];
 type Kept = Record<string, string[]>;   // '<award>-won' | '<award>-nom' -> IMDb ids
 const sparql = async (where: string) => (await getJSON<{ results: { bindings: { imdb: { value: string } }[] } }>(
   `https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(`SELECT DISTINCT ?imdb WHERE { ${where} ?s wdt:P345 ?imdb. FILTER(STRSTARTS(?imdb, "tt")) }`)}`,
@@ -19,15 +22,20 @@ const sparql = async (where: string) => (await getJSON<{ results: { bindings: { 
 
 // the worker: winners and nominees, weekly
 export async function refreshAwards() {
-  const kept = await metaGet<{ at: number }>('awards');
-  if (kept && Date.now() - kept.at < 7 * 24 * HOUR) return;
+  const kept = await metaGet<{ at: number; v: Kept }>('awards');
+  // an award added: fetched now, titles' bits checked again
+  const added = !!kept && !kept.v[`${AWARDS.at(-1)}-nom`];
+  if (kept && !added && Date.now() - kept.at < 7 * 24 * HOUR) return;
   const v: Kept = {};
   const add = (k: string, ids: string[]) => { v[k] = [...new Set([...v[k] || [], ...ids])]; };
   for (const [k, fam] of FAMILY) for (const [rel, l] of [['P166', 'won'], ['P1411', 'nom']] as const)
     add(`${k}-${l}`, await sparql(`?a wdt:P31|wdt:P361 ${fam}. ?s wdt:${rel} ?a.`));
   add('cannes-won', await sparql('?s wdt:P166 wd:Q179808.'));
   add('cannes-nom', await sparql('?s wdt:P1411 wd:Q179808.'));
+  add('picture-won', await sparql('?s wdt:P166 wd:Q102427.'));
+  add('picture-nom', await sparql('?s wdt:P1411 wd:Q102427.'));
   await metaSet('awards', { at: Date.now(), v });
+  if (added) await q.run("delete from title_scores where source = 'awards'");
   console.log(`awards: ${Object.entries(v).map(([k, ids]) => `${k} ${ids.length}`).join(', ')}`);
 }
 
@@ -56,7 +64,8 @@ export function fromOmdb(text: string | null | undefined) {
 // a title's bits
 export async function awardBits(imdb: string | null | undefined, omdbText: string | null | undefined) {
   let b = (imdb ? await wikidata(imdb) : 0) | fromOmdb(omdbText);
-  for (const k of AWARDS.slice(0, -1)) {
+  // Razzies: not part of any award
+  for (const k of AWARDS.filter((a) => a !== 'any' && a !== 'razzie')) {
     if (b & bitOf(`${k}-won`)) b |= both('any');
     else if (b & bitOf(`${k}-nom`)) b |= bitOf('any-nom');
   }

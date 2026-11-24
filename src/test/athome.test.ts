@@ -57,6 +57,12 @@ describe('list filters', () => {
   const lands = [{ iso_3166_1: 'US', english_name: 'United States' }, { iso_3166_1: 'IN', english_name: 'India' }, { iso_3166_1: 'GB', english_name: 'United Kingdom' }];
   const base = { '/configuration/countries': lands, '/configuration/languages': [{ iso_639_1: 'en', english_name: 'English' }] };
   const asked = () => calls.filter((u) => u.includes('/discover/movie')).map((u) => new URL(u).searchParams.get('with_origin_country'));
+  test('only the age ratings let in, films\' and shows\' each, in the list\'s country', async () => {
+    fixtures({ ...base, '/discover/movie': { results: [], total_pages: 1 }, '/discover/tv': { results: [], total_pages: 1 } });
+    await preview(await addUser('rated'), 'both', { region: 'US', certs: ['R', 'NC-17'], tvCerts: ['TV-MA'] });
+    const got = (k: string) => { const u = new URL(calls.filter((x) => x.includes(k)).at(-1)!).searchParams; return [u.get('certification_country'), u.get('certification')]; };
+    assert.deepEqual([got('/discover/movie'), got('/discover/tv')], [['US', 'R|NC-17'], ['US', 'TV-MA']]);
+  });
   test('a TMDB list asks for every country but those left out, and drops a film made there in part', async () => {
     const film = (id: number) => ({ id, title: `Film ${id}`, poster_path: '/p.jpg', release_date: '2026-01-01' });
     fixtures({ ...base, '/discover/movie': { results: [film(30), film(31)], total_pages: 1 },
@@ -127,6 +133,12 @@ describe('latest shows', () => {
     assert.deepEqual(r.posters.map((x) => [x.key, x.day]), [['tmdb:tv:40', Date.parse(day(5))], ['tmdb:tv:41', Date.parse(day(10))]]);
     const only = await preview(await addUser('returning'), 'tv', { airing: ['returning'] });
     assert.deepEqual(only.posters.map((x) => x.key), ['tmdb:tv:41']);
+  });
+  test('Available: its searches ask for shows on the services there', async () => {
+    fixtures({ '/discover/tv': { results: [], total_pages: 1 } });
+    await preview(await addUser('airing-on'), 'tv', { airing: ['new', 'returning'], region: 'IN', reach: 'streaming', watch: ['flatrate', 'rent'] });
+    const asked = calls.filter((u) => u.includes('/discover/tv')).slice(-2).map((u) => { const q = new URL(u).searchParams; return [q.get('watch_region'), q.get('with_watch_monetization_types')]; });
+    assert.deepEqual(asked, [['IN', 'flatrate|rent'], ['IN', 'flatrate|rent']]);
   });
 });
 

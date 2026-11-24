@@ -35,17 +35,18 @@ export const options = async () => {
 };
 export const isCountry = async (cc: unknown): Promise<boolean> => typeof cc === 'string' && (await countries()).some((c) => c.id === cc);
 
-// a country's services (movies' and shows' together, in TMDB's order for that country) and its movie age ratings, mildest
-// first (TMDB's show search has no age-rating filter)
-export const regionOf = (cc: string) => kept(`tmdb-region:${cc}`, async () => {
+// a country's services (movies' and shows' together, in TMDB's order for that country) and its movie and show age ratings, mildest
+// first
+export const regionOf = (cc: string) => kept(`tmdb-region2:${cc}`, async () => {
   type P = { provider_id: number; provider_name: string; logo_path: string | null; display_priorities?: Record<string, number> };
   const [m, t] = await Promise.all((['movie', 'tv'] as const).map((k) => tmdb<{ results: P[] }>(`/watch/providers/${k}?watch_region=${cc}`)));
   const by = new Map<number, P>();
   for (const p of [...m.results, ...t.results]) if (!by.has(p.provider_id)) by.set(p.provider_id, p);
   const services: Service[] = [...by.values()].sort((a, b) => (a.display_priorities?.[cc] ?? 999) - (b.display_priorities?.[cc] ?? 999))
     .map((p) => ({ id: p.provider_id, name: p.provider_name, logo: p.logo_path ? `https://image.tmdb.org/t/p/w92${p.logo_path}` : null }));
-  const certs = (await tmdb<{ certifications: Record<string, { certification: string; order: number }[]> }>('/certification/movie/list')).certifications[cc] || [];
-  return { services, certs: certs.sort((a, b) => a.order - b.order).map((c) => c.certification) };
+  const [certs, tvCerts] = await Promise.all((['movie', 'tv'] as const).map(async (k) => ((await tmdb<{ certifications: Record<string, { certification: string; order: number }[]> }>(`/certification/${k}/list`))
+    .certifications[cc] || []).sort((a, b) => a.order - b.order).map((c) => c.certification)));
+  return { services, certs, tvCerts };
 });
 
 export async function prefsOf(uid: string) {

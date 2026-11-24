@@ -15,18 +15,28 @@ export type Src = 'imdb' | 'rt' | 'mc' | 'mal' | 'kitsu';
 const SRC: Src[] = ['imdb', 'rt', 'mc', 'mal', 'kitsu'];
 // a list's floors (imdb and mal 0-10, rt and kitsu in %, mc 0-100), whether a title must pass all of them or any, and what a
 // source with no score for a title counts as
+// extTo: ceilings, the same way; avg, avgTo: the average of the title's scores (TMDB's too), each on 0-100; imdbVotes, malVotes
+// (…To: ceilings): IMDb's and MyAnimeList's vote counts, always required
 // awards: any of these; awardsOut: none of these
-export type ScoreRule = { ext?: Partial<Record<Src, number>>; meet?: 'all' | 'any'; missing?: 'out' | 'keep'; awards?: string[]; awardsOut?: string[] };
-type Got = Src | 'awards';
-const OMDB: Src[] = ['imdb', 'rt', 'mc'];
+export type ScoreRule = { ext?: Partial<Record<Src, number>>; extTo?: Partial<Record<Src, number>>; avg?: number; avgTo?: number; imdbVotes?: number; imdbVotesTo?: number; malVotes?: number; malVotesTo?: number; meet?: 'all' | 'any'; missing?: 'out' | 'keep';
+  awards?: string[]; awardsOut?: string[] };
+type Got = Src | 'awards' | 'imdbv' | 'malv';
+const OMDB: Got[] = ['imdb', 'rt', 'mc', 'imdbv'];
 // awards use OMDb when there's a key
-const usesOmdb = (s: Got) => OMDB.includes(s as Src) || (s === 'awards' && !!env('OMDB_API_KEY'));
+const usesOmdb = (s: Got) => OMDB.includes(s) || (s === 'awards' && !!env('OMDB_API_KEY'));
 const STALE = 30 * 24 * HOUR;
 // the sources this instance can check (OMDb and MyAnimeList need their keys)
-const sourcesOn = (): Record<Got, boolean> => ({ imdb: !!env('OMDB_API_KEY'), rt: !!env('OMDB_API_KEY'), mc: !!env('OMDB_API_KEY'), mal: !!env('MAL_CLIENT_ID'), kitsu: true, awards: true });
-export const floorsOf = (r: ScoreRule) => Object.entries(r.ext || {}).filter(([s, v]) => SRC.includes(s as Src) && typeof v === 'number' && v > 0) as [Src, number][];
+const sourcesOn = (): Record<Got, boolean> => ({ imdb: !!env('OMDB_API_KEY'), rt: !!env('OMDB_API_KEY'), mc: !!env('OMDB_API_KEY'), mal: !!env('MAL_CLIENT_ID'), kitsu: true, awards: true, imdbv: !!env('OMDB_API_KEY'), malv: !!env('MAL_CLIENT_ID') });
+const set = (l?: Partial<Record<Src, number>>) => Object.entries(l || {}).filter(([s, v]) => SRC.includes(s as Src) && typeof v === 'number' && v > 0) as [Src, number][];
+// each source set: its floor and ceiling (0: none)
+export const floorsOf = (r: ScoreRule) => { const lo = set(r.ext), hi = set(r.extTo);
+  return [...new Set([...lo, ...hi].map(([s]) => s))].map((s): [Src, number, number] => [s, lo.find((x) => x[0] === s)?.[1] || 0, hi.find((x) => x[0] === s)?.[1] || 0]); };
+const on = (s: Got) => sourcesOn()[s];
+const hundred = (s: Src, v: number) => (s === 'imdb' || s === 'mal' ? v * 10 : v);
 // what a list needs checked per title
-const needs = (r: ScoreRule): Got[] => [...floorsOf(r).map(([s]) => s), ...(r.awards?.length || r.awardsOut?.length ? ['awards' as const] : [])];
+const needs = (r: ScoreRule): Got[] => [...new Set([...floorsOf(r).map(([s]) => s), ...(r.avg || r.avgTo ? SRC.filter(on) : []),
+  ...(r.awards?.length || r.awardsOut?.length ? ['awards' as const] : []), ...(r.imdbVotes || r.imdbVotesTo ? ['imdbv' as const] : []),
+  ...(r.malVotes || r.malVotesTo ? ['malv' as const] : [])])];
 export const scored = (r: ScoreRule) => needs(r).length > 0;
 
 type Known = Map<string, Partial<Record<Got, number | null>>>;
@@ -38,15 +48,29 @@ export async function known(keys: string[]): Promise<Known> {
   return out;
 }
 // pass, fail, or pending (a source not checked yet decides it)
-export function verdict(s: Partial<Record<Got, number | null>> | undefined, r: ScoreRule): 'pass' | 'fail' | 'pending' {
-  const floors = floorsOf(r), each = floors.map(([src, floor]) => {
+// tmdb: the title's TMDB score (0-10), for the average
+export function verdict(s: Partial<Record<Got | 'tmdb', number | null>> | undefined, r: ScoreRule): 'pass' | 'fail' | 'pending' {
+  const floors = floorsOf(r), each = floors.map(([src, floor, ceil]) => {
     const v = s?.[src];
-    return v === undefined ? 'unknown' : v === null ? (r.missing === 'keep' ? 'pass' : 'fail') : v >= floor ? 'pass' : 'fail';
+    return v === undefined ? 'unknown' : v === null ? (r.missing === 'keep' ? 'pass' : 'fail') : v >= floor && (!ceil || v <= ceil) ? 'pass' : 'fail';
   });
-  const scores = !floors.length ? 'pass' : r.meet === 'any' ? (each.includes('pass') ? 'pass' : each.includes('unknown') ? 'pending' : 'fail')
+  // shortcut: a plain mean, not weighted by votes; weigh it if few-vote titles crowd lists
+  if (r.avg || r.avgTo) {
+    const got = SRC.filter(on).map((x) => [x, s?.[x]] as const), have = got.flatMap(([x, v]) => (typeof v === 'number' ? [hundred(x, v)] : []));
+    if (typeof s?.tmdb === 'number') have.push(s.tmdb * 10);
+    const mean = have.reduce((a, v) => a + v, 0) / have.length;
+    each.push(got.some(([, v]) => v === undefined) ? 'unknown' : !have.length ? (r.missing === 'keep' ? 'pass' : 'fail')
+      : mean >= (r.avg || 0) && (!r.avgTo || mean <= r.avgTo) ? 'pass' : 'fail');
+  }
+  const scores = !each.length ? 'pass' : r.meet === 'any' ? (each.includes('pass') ? 'pass' : each.includes('unknown') ? 'pending' : 'fail')
     : each.includes('fail') ? 'fail' : each.includes('unknown') ? 'pending' : 'pass';
+  const count = (src: 'imdbv' | 'malv', lo?: number, hi?: number) => {
+    const v = s?.[src];
+    return (!lo && !hi) || !on(src) ? 'pass' : v === undefined ? 'pending' : v === null ? (r.missing === 'keep' ? 'pass' : 'fail') : v >= (lo || 0) && (!hi || v <= hi) ? 'pass' : 'fail';
+  };
   const a = s?.awards, awards = !needs(r).includes('awards') ? 'pass' : a === undefined ? 'pending' : awardsPass(a || 0, r.awards, r.awardsOut) ? 'pass' : 'fail';
-  return scores === 'fail' || awards === 'fail' ? 'fail' : scores === 'pending' || awards === 'pending' ? 'pending' : 'pass';
+  const all = [scores, awards, count('imdbv', r.imdbVotes, r.imdbVotesTo), count('malv', r.malVotes, r.malVotesTo)];
+  return all.includes('fail') ? 'fail' : all.includes('pending') ? 'pending' : 'pass';
 }
 
 const save = (key: string, src: Got, score: number | null) => q.run(`insert into title_scores (key, source, score, checked_at) values (?, ?, ?, ?)
@@ -56,19 +80,22 @@ const num = (v: string | null | undefined) => { const n = v ? parseFloat(v) : Na
 async function check(key: string, srcs: Got[]) {
   const [src, type, id] = key.split(':');
   if (src !== 'tmdb' || (type !== 'movie' && type !== 'tv')) { for (const s of srcs) await save(key, s, null); return; }
-  if (srcs.some((s) => OMDB.includes(s as Src) || s === 'awards')) {
+  if (srcs.some((s) => OMDB.includes(s) || s === 'awards')) {
     const imdb = (await tmdb<{ imdb_id?: string | null }>(`/${type}/${id}/external_ids`)).imdb_id;
     const o = imdb && srcs.some(usesOmdb) ? await omdbFor(imdb) : null;
-    if (srcs.some((s) => OMDB.includes(s as Src))) { await save(key, 'imdb', num(o?.imdb)); await save(key, 'rt', num(o?.rt)); await save(key, 'mc', num(o?.mc)); }
+    if (srcs.some((s) => OMDB.includes(s))) { await save(key, 'imdb', num(o?.imdb)); await save(key, 'rt', num(o?.rt)); await save(key, 'mc', num(o?.mc)); await save(key, 'imdbv', num(o?.votes?.replace(/,/g, ''))); }
     if (srcs.includes('awards')) await save(key, 'awards', await awardBits(imdb, o?.awards));
   }
-  if (srcs.includes('mal') || srcs.includes('kitsu')) {
+  if (srcs.includes('mal') || srcs.includes('malv') || srcs.includes('kitsu')) {
     await loadFribb();
     const entries = type === 'tv' ? [...(fribb.byTmdb.get(Number(id)) || [])].sort((a, b) => (a.season || 99) - (b.season || 99) || a.offset - b.offset) : [];
     const k = type === 'tv' ? entries[0]?.kitsu : fribb.byMovie.get(Number(id));
     const m = type === 'tv' ? entries.find((e) => e.mal)?.mal : k ? fribb.map.get(k)?.mal : null;
     if (srcs.includes('kitsu')) await save(key, 'kitsu', k ? num((await kitsu<KitsuOne>(`/anime/${k}`)).data.attributes.averageRating as string | null | undefined) : null);
-    if (srcs.includes('mal')) await save(key, 'mal', m && env('MAL_CLIENT_ID') ? (await mal<{ mean?: number }>(`/anime/${m}?fields=mean`)).mean ?? null : null);
+    if (srcs.includes('mal') || srcs.includes('malv')) {
+      const got = m && env('MAL_CLIENT_ID') ? await mal<{ mean?: number; num_scoring_users?: number }>(`/anime/${m}?fields=mean,num_scoring_users`) : null;
+      await save(key, 'mal', got?.mean ?? null); await save(key, 'malv', got?.num_scoring_users ?? null);
+    }
   }
 }
 
@@ -96,7 +123,7 @@ export function warm(pool: string[], r: ScoreRule) {
 // the worker: the lists with floors, their candidates' unknown scores checked (OMDb up to 70% of its day's allowance, the rest
 // 120 titles a run), then those lists picked again
 export async function checkDue(reselect: (listId: string) => Promise<unknown>) {
-  const lists = await q.all<{ id: string; filters: ScoreRule }>("select id, filters from lists where kind = 'smart' and (filters->'ext' is not null or filters->'awards' is not null or filters->'awardsOut' is not null)");
+  const lists = await q.all<{ id: string; filters: ScoreRule }>("select id, filters from lists where kind = 'smart' and (filters->'ext' is not null or filters->'extTo' is not null or filters->'avg' is not null or filters->'imdbVotes' is not null or filters->'imdbVotesTo' is not null or filters->'malVotes' is not null or filters->'malVotesTo' is not null or filters->'avgTo' is not null or filters->'awards' is not null or filters->'awardsOut' is not null)");
   const work = new Map<string, Set<Got>>(), touched = new Map<string, Set<string>>();
   for (const l of lists) {
     const need = needs(l.filters), on = sourcesOn();
