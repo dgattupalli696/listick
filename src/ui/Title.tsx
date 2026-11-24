@@ -590,7 +590,7 @@ function Details({ d, cls }: { d: Title; cls: string }) {
         onClick={() => pickDay({ anchor: editRef.current!, air: last.approx === 1 ? null : last.at, save: (t) => retime(t as number), keepTime: timed(last),
           airDay: airAt({ air: d.released }), airLabel: 'Release date' })}>{last.approx === 1 ? 'Add date' : when(last.at)}</button>
     ) : null;
-    if (y.plays) youCard = <YouCard big={`${y.plays}×`} of="watched" rows={[['First watched', when(y.first)], ['Last watched', lw]]} />;
+    if (y.plays) youCard = <YouCard big={`${y.plays}×`} of="watched" rows={y.plays > 1 ? [['First watched', when(y.first)], ['Last watched', lw]] : [['Watched', lw]]} />;
   } else if (y.episodes) {
     const total = (f.episodes as number | null) || d.episodes || 0;
     youCard = <YouCard big={String(y.episodes)} total={total || null} of="episodes" rows={[['Started', when(y.first)], ['Last watched', y.last ? <Tight text={`${ago(y.last)} ago`} /> : null]]} />;
