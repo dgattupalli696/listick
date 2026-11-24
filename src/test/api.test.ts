@@ -3,9 +3,11 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { pool } from '@/db';
+import { handle } from '@/server/api';
 import { q } from '@/server/db';
 import { hookOf } from '@/server/jellyfin';
 import { addPlay } from '@/server/plays';
+import { plexHook } from '@/server/plex';
 import { flushCalls } from '@/server/sources';
 import { addTitles, addUser, api, calls, fixtures, ORIGIN, resetDb, signIn, title } from './helpers';
 
@@ -211,6 +213,69 @@ describe('Jellyfin', () => {
     assert.equal((await send(s1e5)).json.error, 'episode not found', 'TMDB failing');
     fixtures({ '/3/find/349236?external_source=tvdb_id': { tv_episode_results: [{ show_id: 1396, season_number: 1, episode_number: 5 }] }, '/3/tv/1396': TMDB_BB });
     assert.equal((await send(s1e5)).json.recorded, 1, 'and is not remembered as no match');
+  });
+});
+
+describe('Plex', () => {
+  const TMDB_BB = { id: 1396, name: 'Breaking Bad', first_air_date: '2008-01-20', poster_path: '/b.jpg', seasons: [{ season_number: 1, episode_count: 7 }] };
+  test('its webhooks: a scrobble is a play, play is what is playing, a stop keeps the place', async () => {
+    await addUser('pia');
+    const me = await signIn('pia', 'password-123', '198.51.100.41');
+    const key = (await me.post('/api/account/apikey/plex')).json.apiKeys.find((k: { id: string }) => k.id === 'plex').key;
+    fixtures({ '/3/movie/603': TMDB_MATRIX, '/3/find/349232?external_source=tvdb_id': { tv_episode_results: [{ show_id: 1396, season_number: 1, episode_number: 1 }] },
+      '/3/tv/1396': TMDB_BB });
+    const send = async (event: string, Metadata: object, user = true) => {
+      const form = new FormData();
+      form.set('payload', JSON.stringify({ event, user, owner: true, Account: { id: 1, title: 'alice' }, Metadata }));
+      return (await handle(new Request(`${ORIGIN}/api/v1/plex/${key}`, { method: 'POST', body: form }))).json();
+    };
+    const matrix = { type: 'movie', title: 'The Matrix', year: 1999, Guid: [{ id: 'imdb://tt0133093' }, { id: 'tmdb://603' }], duration: 8160000 };
+    const pilot = { type: 'episode', title: 'Pilot', grandparentTitle: 'Breaking Bad', parentIndex: 1, index: 1, Guid: [{ id: 'tvdb://349232' }] };
+    assert.equal((await send('media.scrobble', pilot, false)).recorded, 0, 'another user on the server');
+    assert.equal((await send('media.scrobble', pilot)).recorded, 1);
+    assert.equal((await send('media.scrobble', matrix)).recorded, 1);
+    assert.equal(plexHook(JSON.stringify({ event: 'media.scrobble', Metadata: { type: 'movie', guid: 'com.plexapp.agents.imdb://tt0113277?lang=en' } }))?.imdb, 'tt0113277',
+      'a library on the old agents');
+    assert.deepEqual(await q.all(`select key, season, episode from history where source = 'plex' order by key`),
+      [{ key: MATRIX, season: -1, episode: -1 }, { key: 'tmdb:tv:1396', season: 1, episode: 1 }]);
+    assert.equal((await me.get('/api/account')).json.plex.last.name, 'The Matrix');
+    const now = async () => (await q.one<{ state: { key: string } | null }>(`select state from sync_state where source = 'plex' and item = 'now'`))?.state ?? null;
+    assert.equal((await send('media.play', { ...matrix, viewOffset: 1800000 })).playing, true);
+    assert.equal((await now())?.key, MATRIX, 'what is playing');
+    await send('media.stop', { ...matrix, viewOffset: 4080000 });
+    assert.equal(await now(), null, 'stopped');
+    assert.equal((await q.one<{ state: { pct: number } }>(`select state from sync_state where source = 'plex' and item = ?`, `resume:${MATRIX}`))?.state.pct, 50,
+      'Continue watching from halfway');
+  });
+});
+
+describe('Emby', () => {
+  const TMDB_BB = { id: 1396, name: 'Breaking Bad', first_air_date: '2008-01-20', poster_path: '/b.jpg', seasons: [{ season_number: 1, episode_count: 7 }] };
+  test('its webhooks: a stop played to the end or marked played is a play, a start is what is playing, a pause keeps the place', async () => {
+    await addUser('eli');
+    const me = await signIn('eli', 'password-123', '198.51.100.42');
+    const key = (await me.post('/api/account/apikey/emby')).json.apiKeys.find((k: { id: string }) => k.id === 'emby').key;
+    fixtures({ '/3/movie/603': TMDB_MATRIX, '/3/find/349232?external_source=tvdb_id': { tv_episode_results: [{ show_id: 1396, season_number: 1, episode_number: 1 }] },
+      '/3/tv/1396': TMDB_BB, '/3/search/tv?query=Breaking%20Bad': { results: [TMDB_BB] } });
+    const send = async (Event: string, Item: object, PlaybackInfo: object = {}) =>
+      (await api(`/api/v1/emby/${key}`, { method: 'POST', body: { Event, User: { Name: 'eli' }, Item, PlaybackInfo } })).json;
+    const matrix = { Type: 'Movie', Name: 'The Matrix', ProductionYear: 1999, ProviderIds: { Tmdb: '603', Imdb: 'tt0133093' }, RunTimeTicks: 81600000000 };
+    const pilot = { Type: 'Episode', Name: 'Pilot', SeriesName: 'Breaking Bad', ParentIndexNumber: 1, IndexNumber: 1, ProviderIds: { Tvdb: '349232' } };
+    assert.equal((await send('playback.stop', pilot, { PlayedToCompletion: false })).recorded, 0, 'stopped partway');
+    assert.equal((await send('playback.stop', pilot, { PlayedToCompletion: true })).recorded, 1);
+    assert.equal((await send('item.markplayed', { Type: 'Episode', Name: 'Two', SeriesName: 'Breaking Bad', ParentIndexNumber: 1, IndexNumber: 2, IndexNumberEnd: 3 })).recorded, 2,
+      'marked played, by its show and number, a double episode as two');
+    const form = new FormData();
+    form.set('data', JSON.stringify({ Event: 'playback.scrobble', Item: matrix }));
+    assert.equal((await (await handle(new Request(`${ORIGIN}/api/v1/emby/${key}`, { method: 'POST', body: form }))).json()).recorded, 1, 'a form, before Emby 4.9');
+    assert.equal((await me.get('/api/account')).json.emby.last.name, 'The Matrix');
+    const now = async () => (await q.one<{ state: { key: string } | null }>(`select state from sync_state where source = 'emby' and item = 'now'`))?.state ?? null;
+    assert.equal((await send('playback.start', matrix, { PositionTicks: 12000000000 })).playing, true);
+    assert.equal((await now())?.key, MATRIX, 'what is playing');
+    await send('playback.pause', matrix, { PositionTicks: 40800000000 });
+    assert.equal(await now(), null, 'paused');
+    assert.equal((await q.one<{ state: { pct: number } }>(`select state from sync_state where source = 'emby' and item = ?`, `resume:${MATRIX}`))?.state.pct, 50,
+      'Continue watching from halfway');
   });
 });
 

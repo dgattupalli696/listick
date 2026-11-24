@@ -2,7 +2,7 @@
 // The Settings page (/settings): your name and the list of sections, the picked one in a glass panel beside it. Account: username (signs you in), name (the greeting), email and password, each
 // changed in place from its pencil circle, and signing out. Appearance: this device's look. Region & services: your country
 // and the services you pay for there (smart lists start with them). Connections: Stremio tracks what you
-// watch, and so do Jellyfin and Seanime (Plex, Emby and Kodi to come); AniList and MyAnimeList get your anime progress on
+// watch, and so do Jellyfin, Plex, Emby and Seanime (Kodi to come); AniList and MyAnimeList get your anime progress on
 // Sync. Import: bring your history from another service's export (Kitsu: by username). Your data: all of it as a file, or
 // the account deleted.
 // API access: one key per app, and the calendar feed's link. The section is in the address (/settings/import), so a link opens on it. Each change
@@ -18,7 +18,7 @@ import { say } from './lib/format';
 import { Icon, PATHS } from './lib/icons';
 
 type Account = { name: string; firstName: string | null; email: string | null; stremio: string | null; apiKeys?: { id: string; name: string; key: string | null }[];
-  jellyfin?: { template: string; last: { at: number; name: string } | null } | null; seanime?: { last: { at: number; name: string } | null } | null;
+  jellyfin?: { template: string; last: { at: number; name: string } | null } | null; plex?: { last: { at: number; name: string } | null } | null; emby?: { last: { at: number; name: string } | null } | null; seanime?: { last: { at: number; name: string } | null } | null;
   lists?: Partial<Record<ListId, ListState>> };
 type ListId = 'anilist' | 'mal';
 type ListState = { user: string | null; expired: boolean; running: boolean; last: { at: number; wrote: number; error?: string } | null };
@@ -100,7 +100,7 @@ const SECTIONS = [
 ] as const;
 type SectionId = (typeof SECTIONS)[number]['id'];
 // the connections still to come: name and logo
-const SOON: [string, string][] = [['Plex', 'plex.svg'], ['Emby', 'emby.svg'], ['Kodi', 'kodi.svg']];
+const SOON: [string, string][] = [['Kodi', 'kodi.svg']];
 const sectionOf = (id: string | undefined, admin: boolean): SectionId => (SECTIONS.find((x) => x.id === id && (x.id !== 'users' || admin))?.id ?? 'account');
 
 export function Settings() {
@@ -183,6 +183,8 @@ function AccountPane({ section }: { section: Exclude<SectionId, 'appearance' | '
         </div>
         {!on && <StremioForm done={refresh} />}
         <JellyfinRow a={a} done={done} />
+        <HookRow id="plex" a={a} done={done} />
+        <HookRow id="emby" a={a} done={done} />
         <SeanimeRow a={a} done={done} />
         {(Object.keys(a.lists || {}) as ListId[]).map((id) => <ListRow key={id} id={id} s={a.lists![id]!} done={done} />)}
         {/* the players to come, each as its own connection later */}
@@ -294,6 +296,33 @@ function JellyfinRow({ a, done }: { a: Account; done: (p: Promise<string | null>
         { text: <>Notifications <b>Playback Start</b>, <b>Progress</b>, <b>Stop</b>, <b>User Data Saved</b>; items <b>Movies</b>, <b>Episodes</b>; your user</> },
         { text: <>Template, <b>Send All Properties</b> off, then Save</>, copy: { value: a.jellyfin.template, what: 'template' } },
       ]} />}
+    </>
+  );
+}
+
+// Plex and Emby: webhook address, setup steps, last play
+const HOOK_STEPS = { plex: { name: 'Plex', before: <>Signed in to Plex Web as you, with <b>Plex Pass</b>: Settings › <b>Webhooks</b></>,
+  paste: <><b>Add Webhook</b>, paste the address, then Save Changes</>, after: [] },
+emby: { name: 'Emby', before: <>With <b>Emby Premiere</b>: Settings › Notifications › <b>Add Notification</b> › Webhooks</>,
+  paste: <>URL, and Request content type <b>application/json</b></>,
+  after: [<>Events <b>Playback</b> and <b>Mark Played</b>; Limit user events to <b>your user</b>, then Save</>] } };
+function HookRow({ id, a, done }: { id: keyof typeof HOOK_STEPS; a: Account; done: (p: Promise<string | null>) => Promise<void> }) {
+  const { name, before, paste, after } = HOOK_STEPS[id];
+  const key = a.apiKeys?.find((k) => k.id === id)?.key, hook = key ? `${location.origin}/api/v1/${id}/${key}` : null, last = a[id]?.last;
+  const [open, setOpen] = useState(false);
+  const make = () => { setOpen(true); return done(postJ(`/api/account/apikey/${id}`, {})); };
+  return (
+    <>
+      <div className="acct-detail">
+        <span className={`acct-c logo${last ? ' on' : ''}`} aria-hidden="true"><img src={`/icons/${id}.svg`} alt="" /></span>
+        <div className="acct-detail-t"><b>{name}</b>
+          <span className={`acct-state${last ? ' on' : ''}`}>{!hook ? 'not connected' : last ? playLine(last) : 'waiting for the first play'}</span></div>
+        {hook && <SetupToggle name={name} open={open} set={setOpen} />}
+        {!hook ? <ACircle d={PATHS.plus} label={`Connect ${name}`} cls="on" onClick={make} />
+          : <TwoTap d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" label={`Replace the ${name} address`} cls="rm" fn={make} />}
+      </div>
+      {hook && open && <Steps name={name} steps={[{ text: before },
+        { text: paste, copy: { value: hook, what: 'address', show: `${location.origin}/api/v1/${id}/${masked(key!)}` } }, ...after.map((text) => ({ text }))]} />}
     </>
   );
 }

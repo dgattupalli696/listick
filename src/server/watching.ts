@@ -1,4 +1,4 @@
-// What's playing now: what a player says is playing (Jellyfin, Seanime), or a Stremio item saved in the last 4 minutes, on its Listick
+// What's playing now: what a player says is playing (Jellyfin, Plex, Emby, Seanime), or a Stremio item saved in the last 4 minutes, on its Listick
 // title and episode
 import { STREMIO_LIVE } from '@/lib/cards';
 import { animeNow } from './anime';
@@ -11,6 +11,10 @@ export async function watchingOf(uid: string): Promise<Watching[]> {
   const out: Watching[] = [];
   const j = await jellyfinNow(uid);
   if (j) out.push({ source: 'jellyfin', key: j.key, se: j.se, ep: j.ep, pct: j.pct, at: j.at });
+  for (const app of ['plex', 'emby']) {
+    const x = await jellyfinNow(uid, app);
+    if (x && !out.some((w) => w.key === x.key)) out.push({ source: app, key: x.key, se: x.se, ep: x.ep, pct: x.pct, at: x.at });
+  }
   const s = await animeNow(uid, 'seanime');
   if (s && !out.some((w) => w.key === s.key)) out.push({ source: 'seanime', key: s.key, se: s.se, ep: s.ep, pct: s.pct, at: s.at });
   for (const c of (await liveOf(uid)).stremio?.continue || [])

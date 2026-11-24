@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import { auth } from '@/lib/auth';
 import { q, tx } from './db';
 import { hookOf, JELLYFIN_TEMPLATE, jellyfinEvent } from './jellyfin';
+import { embyHook } from './emby';
+import { plexHook } from './plex';
 import { mailOn, ORIGINS, LINK_ORIGIN } from './mail';
 import { exportOf } from './account';
 import { animeOf, animePlay } from './anime';
@@ -121,7 +123,7 @@ const forgetSource = (uid: string, sources: string[]) => q.run('delete from sync
 // the apps a user can make an API key for (one key each) and the scopes of the public API (docs/api.md) each key opens: lists
 // (your lists and their titles), calendar (the feed), plays (what was played)
 const APPS = [{ id: 'catalogs', name: 'Stremio addon', scopes: ['lists'] }, { id: 'calendar', name: 'Calendar feed', scopes: ['calendar'] },
-  { id: 'jellyfin', name: 'Jellyfin', scopes: ['plays'] }, { id: 'seanime', name: 'Seanime', scopes: ['lists', 'plays'] }];
+  { id: 'jellyfin', name: 'Jellyfin', scopes: ['plays'] }, { id: 'plex', name: 'Plex', scopes: ['plays'] }, { id: 'emby', name: 'Emby', scopes: ['plays'] }, { id: 'seanime', name: 'Seanime', scopes: ['lists', 'plays'] }];
 // a key's user and app, if the key is real
 const keyOf = (token: string) => (/^[\w-]{10,128}$/.test(token) ? q.one<{ id: string; app: string }>('select user_id id, addon app from api_keys where token = ?', token) : null);
 const mayUse = (app: string, scope: string) => !!APPS.find((a) => a.id === app)?.scopes.includes(scope);
@@ -131,6 +133,8 @@ async function account(uid: string) {
   return { ...pubUser(u), email: u.email || null, mail: mailOn(), stremio: u.stremio_key ? (u.stremio_user || 'connected') : null,
     apiKeys: APPS.map(({ id, name }) => ({ id, name, key: keys[id] || null })),
     jellyfin: keys.jellyfin ? { template: JELLYFIN_TEMPLATE, last: await getState<{ at: number; name: string }>(uid, 'jellyfin', 'last') } : null,
+    plex: keys.plex ? { last: await getState<{ at: number; name: string }>(uid, 'plex', 'last') } : null,
+    emby: keys.emby ? { last: await getState<{ at: number; name: string }>(uid, 'emby', 'last') } : null,
     seanime: keys.seanime ? { last: await getState<{ at: number; name: string }>(uid, 'seanime', 'last') } : null,
     lists: Object.fromEntries(await Promise.all(PROVIDERS.filter(configured).map(async (x) => [x, await listStatus(uid, x)]))) };
 }
@@ -288,6 +292,15 @@ async function route(req: Request, url: URL, p: string): Promise<Response | null
     const who = await keyOf(m[1]);
     if (!who || !mayUse(who.app, 'plays')) return json(req, await tooMany(req) ? 429 : 404, { error: 'no such key' });
     return json(req, 200, await jellyfinEvent(who.id, hookOf(await req.text())));
+  }
+  // Plex and Emby webhooks: a form or JSON
+  m = p.match(/^\/api\/v1\/(plex|emby)\/([\w-]{10,128})$/);
+  if (m && req.method === 'POST') {
+    const who = await keyOf(m[2]);
+    if (!who || !mayUse(who.app, 'plays')) return json(req, await tooMany(req) ? 429 : 404, { error: 'no such key' });
+    const body = /^multipart\/form-data/i.test(req.headers.get('content-type') || '')
+      ? [...((await req.formData().catch(() => null))?.values() || [])].find((v) => typeof v === 'string') ?? null : await req.text();
+    return json(req, 200, await jellyfinEvent(who.id, (m[1] === 'plex' ? plexHook : embyHook)(body), m[1]));
   }
   // an app's plays by AniList id (Seanime)
   if (p === '/api/v1/anime/play' && req.method === 'POST') {

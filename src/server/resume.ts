@@ -1,11 +1,11 @@
-// Where a player (Jellyfin, Seanime) stopped partway, one per title, for Home's Continue watching: kept until that episode or a
+// Where a player (Jellyfin, Plex, Emby, Seanime) stopped partway, one per title, for Home's Continue watching: kept until that episode or a
 // later one is played, the card is removed here, or 60 days pass
 import { q } from './db';
 import { setState } from './store';
 import { titlesOf } from './titles';
 
 export type Resume = { key: string; se: number; ep: number; pct: number | null; at: number };
-const APPS = ['jellyfin', 'seanime'];
+const APPS = ['jellyfin', 'plex', 'emby', 'seanime'];
 const KEEP = 60 * 86400000;
 
 export const saveResume = (uid: string, app: string, r: Resume) => setState(uid, app, `resume:${r.key}`, r);

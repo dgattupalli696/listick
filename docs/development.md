@@ -25,7 +25,7 @@ different hosts.
   - `lists.ts` (lists and the smart list builder), `athome.ts` and `bluray.ts` (Latest releases and Latest shows),
     `facts.ts` (per-title filter checks), `scores.ts` and `awards.ts` (other sources' scores and awards for smart lists)
   - `rows.ts` (shared and streaming rows), `foryou.ts`, `upnext.ts` (Up next and the calendar), `resume.ts` (Continue
-    watching from Jellyfin and Seanime), `stats.ts`, `region.ts`
+    watching from Jellyfin, Plex, Emby and Seanime), `plex.ts` and `emby.ts` (their webhooks as Jellyfin events), `stats.ts`, `region.ts`
   - `tracking.ts` and `live.ts` (Stremio turned into plays), `mapping.ts` (Fribb's anime mapping), `titles.ts`, `names.ts`
   - `catalogs.ts` (the public API's lists), `listsync.ts` (Sync to AniList and MyAnimeList)
   - `import/`: history from export files (Trakt, Simkl, Letterboxd, MyAnimeList, AniList) or Kitsu by username, queued in

@@ -38,7 +38,7 @@ export type Wide = { app: string; ref: Ref | null; ids?: string[]; title: string
   cw?: { id: string; video?: string | null; at: number; key?: string; se?: number; ep?: number; movie: boolean } | null;
   play?: { key: string; season: number; episode: number; mine?: number | null } };
 
-export const APP_NAME: Record<string, string> = { listick: 'Listick', stremio: 'Stremio', jellyfin: 'Jellyfin', seanime: 'Seanime', anilist: 'AniList', tmdb: 'TMDB', kitsu: 'Kitsu', manual: 'Marked by you', imported: 'Past history' };
+export const APP_NAME: Record<string, string> = { listick: 'Listick', stremio: 'Stremio', jellyfin: 'Jellyfin', plex: 'Plex', emby: 'Emby', seanime: 'Seanime', anilist: 'AniList', tmdb: 'TMDB', kitsu: 'Kitsu', manual: 'Marked by you', imported: 'Past history' };
 export const TYPE_NAME: Record<TitleType, string> = { movie: 'Movie', tv: 'TV', anime: 'Anime' };
 
 const imdbRef = (id: string | undefined) => (/^tt\d+$/.test(id || '') ? { imdb: id! } : null);
@@ -76,7 +76,7 @@ export function continueItems(S: Summary) {
 // History: from our own database (the last 15 plays, 30 days); the live sources only if the media
 // service is unreachable. Imported past data (Trakt, MDBList) was watched in Stremio, so it shows Stremio's logo; new plays
 // carry their real source
-const SOURCE_APP: Record<string, string> = { stremio: 'stremio', anilist: 'anilist', jellyfin: 'jellyfin', seanime: 'seanime', manual: 'manual', trakt: 'stremio', mdblist: 'stremio' };
+const SOURCE_APP: Record<string, string> = { stremio: 'stremio', anilist: 'anilist', jellyfin: 'jellyfin', plex: 'plex', emby: 'emby', seanime: 'seanime', manual: 'manual', trakt: 'stremio', mdblist: 'stremio' };
 export function historyItems(S: Summary) {
   if (S.media?.recent) return S.media.recent.map((h) => ({ app: SOURCE_APP[h.source] || 'imported', ref: { key: h.key }, title: h.title,
     poster: h.poster, wide: h.backdrop, at: h.at, play: { key: h.key, season: h.season, episode: h.episode, mine: h.mine },

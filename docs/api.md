@@ -1,12 +1,12 @@
 # Listick API (v1)
 
-An API for addons and other apps: a user's lists and their titles, the calendar feed, and plays sent by Jellyfin and Seanime. Every route is under `/api/v1/` on a Listick instance (for example `https://listick.example.com/api/v1/me`, or `http://localhost:3000/api/v1/me`).
+An API for addons and other apps: a user's lists and their titles, the calendar feed, and plays sent by Jellyfin, Plex, Emby and Seanime. Every route is under `/api/v1/` on a Listick instance (for example `https://listick.example.com/api/v1/me`, or `http://localhost:3000/api/v1/me`).
 
 ## Keys and scopes
 
 Users create keys in **Settings › API access**, one per app. Creating a new key replaces the old one, which stops working.
 Each key can use only the scopes its app needs: `lists` (the user's lists and their titles), `calendar` (the calendar
-feed) or `plays` (plays sent by Jellyfin or Seanime). To add an app, add an entry to `APPS` in `src/server/api.ts`. Send the key as a header:
+feed) or `plays` (plays sent by Jellyfin, Plex, Emby or Seanime). To add an app, add an entry to `APPS` in `src/server/api.ts`. Send the key as a header:
 
 ```
 Authorization: Bearer <key>
@@ -69,6 +69,26 @@ Listick's template). The key is in the address; a wrong key gets `404`. The body
 | `position`, `runtime` | `PlaybackPositionTicks`, `RunTimeTicks` | how far it is; 2 minutes to 90 % in goes to Continue watching |
 
 The reply is `{ "ok": true, "recorded": <plays added> }`, or `{ "ok": true, "playing": true }` for a start or progress event.
+
+### `POST /api/v1/plex/<key>` (`plays`)
+
+What Plex's webhooks send (they need Plex Pass), set up from **Settings › Connections › Plex**. The key is in the
+address; a wrong key gets `404`. The body is Plex's multipart form; its `payload` field is read as the Jellyfin events
+above: `media.play` and `media.resume` are what's playing now, `media.pause` and `media.stop` keep the place for Continue
+watching, `media.scrobble` (90 % in) is a play. Events with `user` false (another user on the server) are skipped. The movie
+or episode is found by the `tmdb://`, `imdb://` and `tvdb://` ids in `Metadata.Guid`, else by `grandparentTitle`,
+`parentIndex` and `index`.
+
+The reply is the same as Jellyfin's.
+
+### `POST /api/v1/emby/<key>` (`plays`)
+
+What Emby's Webhooks send (they need Emby Premiere), set up from **Settings › Connections › Emby** with the user filter
+set to your user. The key is in the address; a wrong key gets `404`. The body is JSON (a multipart form before Emby 4.9),
+read as the Jellyfin events above: `playback.start` and `playback.unpause` are what's playing now, `playback.pause` keeps
+the place for Continue watching, `playback.stop` with `PlaybackInfo.PlayedToCompletion`, `playback.scrobble` and
+`item.markplayed` are a play. The movie or episode is found by `Item.ProviderIds` (`Tmdb`, `Imdb`, `Tvdb`), else by
+`SeriesName`, `ParentIndexNumber` and `IndexNumber` (`IndexNumberEnd` for a double episode). The reply is the same as Jellyfin's.
 
 ### `GET /api/v1/anime` (`lists`)
 

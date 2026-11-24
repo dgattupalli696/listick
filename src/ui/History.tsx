@@ -13,7 +13,7 @@ import { ShelfWrap } from './Shelf';
 type Play = { id: number; key: string; season: number; episode: number; at: number; approx: number; source: string; title: string; label: string | null; type: TitleType; anime: boolean;
   poster: string | null; backdrop: string | null; mine: number | null };
 type Kind = 'all' | 'movie' | 'tv' | 'anime';
-const APP: Record<string, string> = { stremio: 'stremio', anilist: 'anilist', jellyfin: 'jellyfin', seanime: 'seanime', manual: 'manual', trakt: 'stremio', mdblist: 'stremio' };
+const APP: Record<string, string> = { stremio: 'stremio', anilist: 'anilist', jellyfin: 'jellyfin', plex: 'plex', emby: 'emby', seanime: 'seanime', manual: 'manual', trakt: 'stremio', mdblist: 'stremio' };
 const kindOf = (p: Play): Kind => (p.type === 'movie' ? 'movie' : p.anime || p.type === 'anime' ? 'anime' : 'tv');
 const dayName = (t: number) => {
   const d = new Date(t), today = new Date(new Date().toDateString()).getTime(), days = Math.round((new Date(d.toDateString()).getTime() - today) / 86400000);
