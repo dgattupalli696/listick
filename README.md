@@ -9,16 +9,16 @@ Self-hosted, with invite-only sign-up, so you can share it with family and frien
 
 <p>
   <img src="docs/screenshots/movies.webp" alt="Movies: the trending carousel and rows" width="49%">
-  <img src="docs/screenshots/title.webp" alt="A title with its episodes" width="49%">
+  <img src="docs/screenshots/title.webp" alt="A title with Where to watch and your progress" width="49%">
   <img src="docs/screenshots/stats.webp" alt="Stats" width="49%">
   <img src="docs/screenshots/lists.webp" alt="Lists and smart lists" width="49%">
   <img src="docs/screenshots/calendar.webp" alt="Airing calendar" width="49%">
   <img src="docs/screenshots/history.webp" alt="History" width="49%">
 </p>
 <p>
-  <img src="docs/screenshots/smart-basics.webp" alt="Smart list builder: basics" width="32.5%">
+  <img src="docs/screenshots/smart-basics.webp" alt="Smart list builder: general" width="32.5%">
   <img src="docs/screenshots/smart-scores.webp" alt="Smart list builder: scores" width="32.5%">
-  <img src="docs/screenshots/smart-streaming.webp" alt="Smart list builder: streaming services" width="32.5%">
+  <img src="docs/screenshots/smart-streaming.webp" alt="Smart list builder: where to watch" width="32.5%">
 </p>
 <p align="center">
   <img src="docs/screenshots/phone-home.webp" alt="Home on a phone" width="24%">
