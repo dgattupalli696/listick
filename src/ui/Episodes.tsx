@@ -190,7 +190,7 @@ export function EpisodesPane({ d, st, set, cls, rows = false, nextSlot }: { d: T
       markClick = () => ask(markRef.current);
     } else {
       markLabel = 'Season watched; click twice to unmark';
-      markClick = () => markAsk.tap(() => markEpisodes(aired.map((e) => e.ep), false));
+      markClick = () => markAsk.tap(() => markEpisodes(seen.map((e) => e.ep), false));
     }
   }
 
@@ -314,7 +314,7 @@ function NextCard({ d, e, episodes, season, markEpisodes, open }: { d: Title; e:
         </button>
         <span className={`tc-nexttag${playing(d, e, season) ? ' playing' : ''}`}>{playing(d, e, season) ? 'Watching' : ep.upcoming ? airs(e.air) : 'Next up'}</span>
         <div className="tc-markwrap">
-          <button ref={mkRef} type="button" className={`tc-mark${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel} disabled={ep.upcoming}
+          <button ref={mkRef} type="button" className={`tc-mark${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel}
             onClick={() => ep.tick(mkRef.current)}>
             <Circ><TickIcon armed={ep.ask.armed} upcoming={ep.upcoming} /></Circ>
           </button>
@@ -352,7 +352,7 @@ function HeroNext({ d, e, episodes, season, markEpisodes, open }: { d: Title; e:
           </button>
         </div>
         <div className="tc-markwrap">
-          <button ref={mkRef} type="button" className={`tc-mark${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel} disabled={ep.upcoming}
+          <button ref={mkRef} type="button" className={`tc-mark${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel}
             onClick={() => ep.tick(mkRef.current)}><Circ><TickIcon armed={ep.ask.armed} upcoming={ep.upcoming} /></Circ></button>
         </div>
       </div>
@@ -406,14 +406,13 @@ function StripTile({ d, e, episodes, season, markEpisodes, open, next }: { d: Ti
           {e.overview && <span className="tc-sov"><b>{[ep.upcoming ? airs(e.air) : epDay(e.air), e.runtime ? `${e.runtime}m` : null].filter(Boolean).join(' · ')}</b><span>{e.overview}</span></span>}
         </button>
         {playing(d, e, season) && <span className="tc-nexttag playing">Watching</span>}
-        {ep.upcoming ? <span className="tc-sair">{epDay(e.air)}</span> : (
-          <div className="tc-markwrap">
-            <button ref={mkRef} type="button" className={`tc-mark${e.watched ? ' on' : ''}${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel}
-              onClick={() => ep.tick(mkRef.current)}>
-              <Circ><TickIcon armed={ep.ask.armed} upcoming={false} /></Circ>
-            </button>
-          </div>
-        )}
+        {ep.upcoming && <span className="tc-sair">{epDay(e.air)}</span>}
+        <div className="tc-markwrap">
+          <button ref={mkRef} type="button" className={`tc-mark${e.watched ? ' on' : ''}${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel}
+            onClick={() => ep.tick(mkRef.current)}>
+            <Circ><TickIcon armed={ep.ask.armed} upcoming={ep.upcoming} /></Circ>
+          </button>
+        </div>
       </div>
       <button type="button" className="tc-sen" onClick={() => open(e.ep)}><b>{`E${e.ep}`}</b>{name}</button>
     </div>
@@ -439,7 +438,7 @@ function EpisodeRows({ d, episodes, season, markEpisodes, open, here }: { d: Tit
 function useEpisode(d: Title, e: Episode, episodes: Episode[], season: number, markEpisodes: Mark) {
   const { reloadTitle, pickDay } = useTitle();
   const ask = useTwoTap();
-  const upcoming = !!e.air && e.air > today();
+  const upcoming = !e.watched && !!e.air && e.air > today();
   const runTo = () => {
     const i = episodes.indexOf(e); let j = i;
     while (j > 0 && !episodes[j - 1].watched && (!episodes[j - 1].air || episodes[j - 1].air! <= today())) j--;
@@ -468,7 +467,7 @@ function useEpisode(d: Title, e: Episode, episodes: Episode[], season: number, m
     if (!w.at) return markOne(anchor);
     pickDay({ anchor, air: w.at, keepTime: timed(w), airDay: airAt(e), save: (t) => retime(t as number) });
   };
-  const tickLabel = ask.armed ? ((e.watched?.plays || 0) > 1 ? 'Remove one play?' : 'Remove?') : e.watched ? 'Watched; click twice to unmark' : upcoming ? airs(e.air) : 'Mark watched';
+  const tickLabel = ask.armed ? ((e.watched?.plays || 0) > 1 ? 'Remove one play?' : 'Remove?') : e.watched ? 'Watched; click twice to unmark' : upcoming ? `${airs(e.air)}; mark watched` : 'Mark watched';
   return { ask, upcoming, tick, redate, tickLabel };
 }
 const TickIcon = ({ armed, upcoming }: { armed: boolean; upcoming: boolean }) => (armed ? <PIcon name="close" /> : upcoming ? <Icon d={CLOCK} /> : <PIcon name="watched" />);
@@ -481,7 +480,7 @@ function EpisodeRow({ d, e, episodes, next, season, markEpisodes, open }: { d: T
   const w = e.watched;
   const tick = (
     <div className="tc-markwrap">
-      <button ref={mkRef} type="button" className={`tc-mark${w ? ' on' : ''}${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel} disabled={ep.upcoming}
+      <button ref={mkRef} type="button" className={`tc-mark${w ? ' on' : ''}${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel}
         onClick={(x) => { x.stopPropagation(); ep.tick(mkRef.current); }}>
         <Circ><TickIcon armed={ep.ask.armed} upcoming={ep.upcoming} /></Circ>
       </button>
@@ -593,11 +592,11 @@ function EpisodeCard({ d, e, episodes, season, where, markEpisodes, dir, open }:
               </div>
             )}
             <div className="tep-act">
-              <button ref={mkRef} type="button" className={`tc-mark${w ? ' on' : ''}${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel} disabled={ep.upcoming}
+              <button ref={mkRef} type="button" className={`tc-mark${w ? ' on' : ''}${ep.ask.armed ? ' confirm' : ''}`} aria-label={ep.tickLabel} title={ep.tickLabel}
                 onClick={() => ep.tick(mkRef.current)}><Circ><TickIcon armed={ep.ask.armed} upcoming={ep.upcoming} /></Circ></button>
               {ep.ask.armed ? <span className="tc-al bad">Remove?</span>
                 : w ? <button ref={dateRef} type="button" className="tc-al on tc-evdate" aria-label={`Watched ${seenTxt}; change the date`} onClick={() => ep.redate(dateRef.current)}>{seenTxt}</button>
-                : <span className="tc-al">{ep.upcoming ? 'Not out' : 'Watch'}</span>}
+                : <span className="tc-al">Watch</span>}
             </div>
           </div>
         </div>
