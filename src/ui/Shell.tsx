@@ -69,22 +69,27 @@ const LISTS = { href: '/lists', name: 'Lists', icon: PATHS.lists }, STATS = { hr
 const CAL = { href: '/calendar', name: 'Calendar', icon: PATHS.cal };
 
 const BACK = 'M15 5l-7 7 7 7';
+// a page link: leaves an open title and clears the search
+const useGo = () => {
+  const { setQ } = useApp(), nav = useTitleNav();
+  return () => { nav?.leave(); setQ(''); document.body.classList.remove('searching'); };
+};
 
 // tablet and desktop: the side menu: the logo, the pages capsule (and Back while a title is open), Settings and your account
 export function Rail() {
-  const path = usePathname(), nav = useTitleNav();
+  const path = usePathname(), nav = useTitleNav(), go = useGo();
   return (
     <nav className="glass siderail" id="rail" aria-label="Listick pages">
-      <Link className="rail-logo" href="/" aria-label="Listick home"><Logo ring={6.5} /></Link>
+      <Link className="rail-logo" href="/" aria-label="Listick home" onClick={go}><Logo ring={6.5} /></Link>
       <div className="rail-pages">
         {PAGES.map((p) => (
-          <Link key={p.href} href={p.href} className={`rail-tab${!nav && path === p.href ? ' active' : ''}`} aria-current={!nav && path === p.href ? 'page' : undefined} onClick={nav?.leave}>
+          <Link key={p.href} href={p.href} className={`rail-tab${!nav && path === p.href ? ' active' : ''}`} aria-current={!nav && path === p.href ? 'page' : undefined} onClick={go}>
             <span className="rail-i"><Icon d={p.icon} size={20} width={1.9} /></span><span className="rail-t">{p.name}</span>
           </Link>
         ))}
         <span className="rail-sep" />
         {[LISTS, CAL, STATS].map((p) => (
-          <Link key={p.href} href={p.href} className={`rail-tab${!nav && path.startsWith(p.href) ? ' active' : ''}`} aria-current={!nav && path.startsWith(p.href) ? 'page' : undefined} onClick={nav?.leave}>
+          <Link key={p.href} href={p.href} className={`rail-tab${!nav && path.startsWith(p.href) ? ' active' : ''}`} aria-current={!nav && path.startsWith(p.href) ? 'page' : undefined} onClick={go}>
             <span className="rail-i"><Icon d={p.icon} size={20} width={1.9} /></span><span className="rail-t">{p.name}</span>
           </Link>
         ))}
@@ -101,7 +106,7 @@ export function Rail() {
 
 // inTitle: the copy over a title's page
 export function TopBar({ inTitle }: { inTitle?: () => void }) {
-  const { setQ } = useApp(), path = usePathname(), home = path === '/' && !inTitle;
+  const { q, setQ } = useApp(), path = usePathname(), home = path === '/' && !inTitle, go = useGo();
   const toPage = (v: string) => {
     inTitle!();
     const q = document.getElementById('q') as HTMLInputElement | null;
@@ -111,11 +116,11 @@ export function TopBar({ inTitle }: { inTitle?: () => void }) {
     <header className="top">
       <div className="top-row">
         {home && <Greeting part="date" />}
-        <Link className="brand" href="/" aria-label="Listick home"><Logo /></Link>
+        <Link className="brand" href="/" aria-label="Listick home" onClick={go}><Logo /></Link>
         <div className="top-tools">
           <form className="glass search" id={inTitle ? undefined : 'search'} role="search" onSubmit={(e) => e.preventDefault()}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
-            <input type="search" id={inTitle ? undefined : 'q'} placeholder="Search movies, shows and anime" aria-label="Search movies, shows and anime" autoComplete="off"
+            <input type="search" id={inTitle ? undefined : 'q'} placeholder="Search movies, shows and anime" aria-label="Search movies, shows and anime" autoComplete="off" value={q}
               onChange={(e) => { if (inTitle && e.target.value.trim()) toPage(e.target.value); setQ(e.target.value); }} onBlur={(e) => { if (!e.target.value.trim()) document.body.classList.remove('searching'); }} />
             <kbd>/</kbd>
           </form>
@@ -142,12 +147,12 @@ export function TopBar({ inTitle }: { inTitle?: () => void }) {
 
 // phone: bottom bar
 export function PhoneTabs() {
-  const path = usePathname(), nav = useTitleNav();
+  const path = usePathname(), nav = useTitleNav(), go = useGo();
   const on = (href: string) => !nav && (href === '/' ? path === '/' : path.startsWith(href));
   return (
     <nav className="pbar" aria-label="Listick pages">
       {[...PAGES, LISTS, STATS].map((t) => (
-        <Link key={t.href} href={t.href} className={`pbar-t${on(t.href) ? ' on' : ''}`} aria-current={on(t.href) ? 'page' : undefined} onClick={nav?.leave}>
+        <Link key={t.href} href={t.href} className={`pbar-t${on(t.href) ? ' on' : ''}`} aria-current={on(t.href) ? 'page' : undefined} onClick={go}>
           <Icon d={t.icon} size={22} width={1.9} /><span>{t.name}</span>
         </Link>
       ))}
