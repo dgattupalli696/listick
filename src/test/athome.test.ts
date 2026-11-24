@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { pool } from '@/db';
 import { homeReleases } from '@/server/athome';
-import { preview, refreshDue } from '@/server/lists';
+import { preview, refreshDue, refreshList } from '@/server/lists';
 import { q } from '@/server/db';
 import { metaSet } from '@/server/store';
 import { addTitles, addUser, calls, fixtures, resetDb, title } from './helpers';
@@ -145,5 +145,19 @@ describe('refresh', () => {
     fixtures({ '/discover/movie': { results: [], total_pages: 1 } });
     const r = await preview(await addUser('days'), 'movie', { home: ['bluray'] });
     assert.deepEqual(r.posters.map((x) => [x.key, x.day]), [['tmdb:movie:3', ago(20)]]);
+  });
+  test('Latest releases: a film found after the first run goes on top, not back at its own day; changed filters start over', async () => {
+    await addTitles(title('tmdb:movie:11'), title('tmdb:movie:12'), title('tmdb:movie:13'));
+    fixtures({ '/discover/movie': { results: [], total_pages: 1 } });
+    const uid = await addUser('arrive'), items = async () => (await q.one<{ items: string[] }>(`select items from lists where id = 'arrive'`))!.items;
+    await q.run(`insert into lists (id, user_id, name, kind, media, filters, created_at) values ('arrive', ?, 'arrive', 'smart', 'movie', ?::jsonb, ?)`, uid, JSON.stringify({ home: ['bluray'] }), now);
+    await metaSet('bluray', { at: now, discs: [disc(11, ago(2)), disc(12, ago(10))] });
+    await refreshList(uid, 'arrive');
+    assert.deepEqual(await items(), ['tmdb:movie:11', 'tmdb:movie:12']);
+    await metaSet('bluray', { at: now, discs: [disc(11, ago(2)), disc(12, ago(10)), disc(13, ago(6))] });
+    await refreshList(uid, 'arrive');
+    assert.deepEqual(await items(), ['tmdb:movie:13', 'tmdb:movie:11', 'tmdb:movie:12']);
+    await refreshList(uid, 'arrive', true);
+    assert.deepEqual(await items(), ['tmdb:movie:11', 'tmdb:movie:13', 'tmdb:movie:12']);
   });
 });

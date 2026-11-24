@@ -228,9 +228,10 @@ async function libraryPool(uid: string, media: Media, f: Filters) {
   const by: Record<string, (a: Title, b: Title) => number> = {
     rating: (a, b) => (mine.get(b.key) ?? b.rating ?? 0) - (mine.get(a.key) ?? a.rating ?? 0), newest: (a, b) => (b.year || 0) - (a.year || 0),
     oldest: (a, b) => (a.year || 9999) - (b.year || 9999), az: (a, b) => a.title.localeCompare(b.title),
-    releaseOld: (a, b) => at.get(a.key)! - at.get(b.key)! };
+    // same day: by key
+    releaseOld: (a, b) => at.get(a.key)! - at.get(b.key)! || a.key.localeCompare(b.key, 'en', { numeric: true }) };
   if (f.sort === 'shuffle') for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [list[i], list[j]] = [list[j], list[i]]; }
-  if (f.sort !== 'shuffle') list.sort(by[f.sort || ''] || ((a, b) => at.get(b.key)! - at.get(a.key)!));
+  if (f.sort !== 'shuffle') list.sort(by[f.sort || ''] || ((a, b) => at.get(b.key)! - at.get(a.key)! || b.key.localeCompare(a.key, 'en', { numeric: true })));
   return { keys: list.map((t) => t.key), at };
 }
 // a smart list's candidates: each query's pages in turn, taken alternately (so movies and shows, or decades, mix), after leaving
@@ -423,8 +424,17 @@ const merged = (found: string[], had: string[] | null, f: Filters) => [...new Se
 export async function refreshList(uid: string, id: string, over = false) {
   const l = await listRow(uid, id);
   if (!l || l.kind !== 'smart' || !l.media) return l;
-  const { keys: found, pool } = await runSmart(uid, l.media, l.filters || {});
-  if (scored(l.filters || {})) await metaSet(`list-pool:${id}`, { at: Date.now(), keys: pool });
+  const f = l.filters || {}, r = await runSmart(uid, l.media, f), pool = r.pool;
+  let found = r.keys;
+  // Latest releases: newest found first
+  if ('at' in r && r.at && (f.home?.length || f.airing?.length) && (!f.sort || f.sort === 'release')) {
+    // list-added: day each title was found (0: first run)
+    const at = r.at, had = over ? null : await metaGet<Record<string, number>>(`list-added:${id}`), now = Date.now(), seen = { ...had };
+    for (const k of pool) seen[k] ??= had ? now : 0;
+    await metaSet(`list-added:${id}`, seen);
+    found = (await pick([...pool].sort((a, b) => Math.max(at.get(b) ?? 0, seen[b]) - Math.max(at.get(a) ?? 0, seen[a])), f)).keys;
+  }
+  if (scored(f)) await metaSet(`list-pool:${id}`, { at: Date.now(), keys: pool });
   const keys = over ? found : merged(found, l.items, l.filters || {});
   await q.run('update lists set items = ?::jsonb, refreshed_at = ? where id = ?', JSON.stringify(keys), Date.now(), id);
   return listRow(uid, id);
