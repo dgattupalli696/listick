@@ -12,7 +12,7 @@ import { type Ref, type Tile } from './lib/media';
 import { Group } from './Rail';
 import { TopBar } from './Shell';
 import { ShelfGrid } from './Shelf';
-import { TitleCtx, loadTitle, setTitleNav, titleUrl, useTitle, type PersonRef, type PickArgs, type Title, type TitleState } from './lib/title';
+import { TitleCtx, loadTitle, setTitleNav, titleUrl, useTitle, type PersonRef, type PickArgs, type Title, type TitleState, type Way } from './lib/title';
 
 export type TitlePanelApi = { open: (ref: Ref) => void };
 type Body = { t?: Title; err?: string; loading?: boolean; top?: number; fade?: boolean };
@@ -147,14 +147,7 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
     };
   }, [closeTitle, full]);
 
-  const player = trailer && (
-    // trailer
-    <div className="tc-player">
-      <iframe src={`https://www.youtube-nocookie.com/embed/${trailer}?autoplay=1&rel=0&modestbranding=1`} allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-        allowFullScreen title="Trailer" referrerPolicy="strict-origin-when-cross-origin" />
-      <button type="button" className="hero-x" aria-label="Close the trailer" onClick={closeTrailer}>×</button>
-    </div>
-  );
+  const player = trailer && <Trailer id={trailer} close={closeTrailer} inline="tc-player" />;
   const base = full && content.t ? { t: content.t, view } : null;
   // loading or failed
   const wait = !content.t && (
@@ -179,6 +172,21 @@ export function TitlePanel({ ref }: { ref: RRef<TitlePanelApi> }) {
     </TitleCtx.Provider>,
     document.body,
   );
+}
+
+// a trailer: a floating window on desktop (outside it or Esc closes it), over the picture on a phone (inline: that place's class)
+export function Trailer({ id, close, inline }: { id: string; close: () => unknown; inline: string }) {
+  const phone = usePhone();
+  const frame = <iframe src={`https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&modestbranding=1`} allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+    allowFullScreen title="Trailer" referrerPolicy="strict-origin-when-cross-origin" />;
+  if (phone) return <div className={inline}>{frame}<button type="button" className="hero-x" aria-label="Close the trailer" onClick={close}>×</button></div>;
+  return createPortal(
+    <div className="tp-over ttr-over" onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <div className="ttr" role="dialog" aria-modal="true" aria-label="Trailer">
+        <button type="button" className="tp-x" aria-label="Close the trailer" onClick={close}><Icon d="M6 6l12 12M18 6L6 18" size={14} /></button>
+        {frame}
+      </div>
+    </div>, document.body);
 }
 
 // a number and its unit ("6.1 GB", "7 d") and a count pair ("19 / 19") with only a hair of space between them: the unit or slash
@@ -376,11 +384,13 @@ function TitleFull({ d, close, leave, scroller, player }: { d: Title; close: () 
         {/* poster (wider screens) */}
         {d.poster && !phone && <img className="tf-poster" src={big(d.poster)} srcSet={srcs(d.poster, 'poster')} sizes="260px" alt="" />}
         <div className="hero-body"><Head d={d} h="h2" />{d.overview && <HeroStory key={d.key} text={d.overview} />}</div>
-        {d.type !== 'movie' && !phone && <div className="tf-next" ref={setNextSlot} />}
+        {/* the corner: a show's Next up, then where to watch (a movie's alone) */}
+        {!phone && <div className="tf-corner">{d.type !== 'movie' && <div className="tf-next" ref={setNextSlot} />}<WatchCard d={d} /></div>}
         {player}
       </section>
       <div className="tf-body">
         {d.type !== 'movie' && phone && <div className="tf-next" ref={setNextSlot} />}
+        {phone && <WatchCard d={d} />}
         <section className="tf-sec tf-ov">
           {d.overview && <Story key={d.key} d={d} />}
           <Details d={d} cls="tf-details" />
@@ -390,13 +400,49 @@ function TitleFull({ d, close, leave, scroller, player }: { d: Title; close: () 
             <EpisodesPane d={d} st={eps} set={(s) => setEps((x) => ({ ...x, ...s }))} cls="tf-epspane on" rows nextSlot={nextSlot} />
           </section>
         )}
-        {!!d.cast?.length && row('cast', 'Cast', d.cast, (x) => `${x.name}|${x.role}`, (x) => <CastCard x={x} opens={d.key.startsWith('tmdb:')} />)}
+        {d.cast.filter((x) => x.photo).length >= 3 ? row('cast', 'Cast', d.cast.filter((x) => x.photo), (x) => `${x.name}|${x.role}`, (x) => <CastCard x={x} opens={d.key.startsWith('tmdb:')} />)
+          : !!d.cast.length && <CastNames key="cast" d={d} />}
         {/* collection */}
         {d.collectionItems?.some((t) => t.key !== d.key) && row('collection', d.collection?.name || 'Collection',
           d.collectionItems.map((t) => (t.key === d.key ? { ...t, tag: 'THIS MOVIE' } : t)), (t) => t.key, trend)}
         {!!d.similar?.length && row('similar', 'Similar', d.similar, (t) => t.key, trend, () => setGrid(true))}
       </div>
     </>
+  );
+}
+
+// where to watch: rows of five services, yours first (ringed), each with its way under it; more than five: four and "+N",
+// the rest on hover; each opens JustWatch's page for the title
+const WAY_NAME: Record<Way['kind'], string> = { stream: 'Subscription', free: 'Free', rent: 'Rent/buy' };
+function WatchCard({ d }: { d: Title }) {
+  const w = d.ways;
+  if (!w) return null;
+  const list = [...w.list.filter((x) => x.mine), ...w.list.filter((x) => !x.mine)], href = w.link || undefined, fit = list.length > 5 ? 4 : 5;
+  return (
+    <section className="wt" aria-label="Where to watch">
+      <div className="wt-h"><span className="hn-k">Where to watch</span><a href={href} target="_blank" rel="noopener">JustWatch</a></div>
+      <div className="wt-row">
+        {list.map((x, i) => (
+          <a key={x.id} className={`wt-i${i >= fit ? ' wt-x' : ''}`} href={href} target="_blank" rel="noopener" aria-label={`${x.name} · ${WAY_NAME[x.kind]}${x.mine ? ' · yours' : ''}`}>
+            <span className={`wt-logo${x.mine ? ' mine' : ''}`}>{x.logo ? <img src={x.logo} alt="" loading="lazy" /> : x.name[0]}</span><span>{WAY_NAME[x.kind]}</span>
+          </a>))}
+        {list.length > fit && <span className="wt-more">{`+${list.length - fit}`}</span>}
+      </div>
+    </section>
+  );
+}
+
+// a cast with few photos: names and roles, each opening the person
+function CastNames({ d }: { d: Title }) {
+  const { openPerson } = useTitle(), opens = d.key.startsWith('tmdb:');
+  return (
+    <section className="tf-sec group">
+      <div className="group-head"><h2 className="sh">Cast</h2></div>
+      <div className="tf-castnames">{d.cast.map((x) => {
+        const words = <>{x.name}{x.role && <span>{` · ${x.role}`}</span>}</>;
+        return opens ? <button key={`${x.name}|${x.role}`} type="button" onClick={() => openPerson({ id: x.id, name: x.name })}>{words}</button> : <b key={`${x.name}|${x.role}`}>{words}</b>;
+      })}</div>
+    </section>
   );
 }
 
@@ -489,7 +535,9 @@ function Details({ d, cls }: { d: Title; cls: string }) {
     </div>
   );
   const money = (n: number) => (n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : `$${Math.round(n / 1e6)}M`);
-  const names = (list: string[] | undefined) => (list?.length ? [`${list[0]}${list.length > 1 ? ` +${list.length - 1}` : ''}`, list.join(', ')] : [null, null]);
+  // the first name and how many more (in the accent); hovering or focusing it shows them all
+  const names = (list: string[] | undefined): [ReactNode, string | null] => (!list?.length ? [null, null] : list.length === 1 ? [list[0], list[0]]
+    : [<span key="n" className="v-more" tabIndex={0}><span className="v-s">{list[0]} <b>{`+${list.length - 1}`}</b></span><span className="v-all">{list.join(', ')}</span></span>, list.join(', ')]);
   const day = (iso: string) => new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   const f = d.facts || {}, str = (k: string) => (f[k] == null ? undefined : String(f[k]));
   const [stu, stuAll] = names(str('studio')?.split(', '));
@@ -526,10 +574,10 @@ function Details({ d, cls }: { d: Title; cls: string }) {
   const aw = d.scores?.awards, y = d.you || {};
   const when = (t: number | null | undefined) => (t ? fmtDay(new Date(t).toISOString()) : null);
   const award = aw ? aw.split('. ')[0].replace(/\.$/, '') : null;
-  if (d.type !== 'anime') cells.push(...(phone ? [cell('From', [name('region', str('country')), name('language', str('language'))].filter(Boolean).join(' · '), null, 'txt')]
-    : [cell('Country', name('region', str('country')), null, 'txt'), cell('Language', name('language', str('language')), null, 'txt'), cell('Awards', award, aw, 'txt')]));
-  // phone: your history line
-  let you: ReactNode[] = [];
+  if (d.type !== 'anime') cells.push(cell('From', [name('region', str('country')), name('language', str('language'))].filter(Boolean).join(' · '), null, 'txt'),
+    ...(phone ? [] : [cell('Awards', award, aw, 'txt')]));
+  // phone: your history line; wider: the You card beside the facts
+  let you: ReactNode[] = [], youCard: ReactNode = null;
   if (d.type === 'movie') {
     // the latest watch's date can be changed here (a date-unknown one, from marking or rating it, too)
     const last = y.moviePlays?.[0];
@@ -545,10 +593,12 @@ function Details({ d, cls }: { d: Title; cls: string }) {
           airDay: airAt({ air: d.released }), airLabel: 'Release date' })}>{last.approx === 1 ? 'Add date' : when(last.at)}</button>
     ) : null;
     if (phone) you = [y.plays ? `${y.plays}× watched` : null, y.first ? `first ${when(y.first)}` : null, lw && <span key="l">{last!.approx === 1 ? '' : 'last '}{lw}</span>];
-    else cells.push(cell('Watched', y.plays ? `${y.plays}×` : null, null, 'txt'), cell('First watched', when(y.first), null, 'txt'), cell('Last watched', lw, null, 'txt'));
+    else if (y.plays) youCard = <YouCard big={`${y.plays}×`} of="watched" rows={[['First watched', when(y.first)], ['Last watched', lw]]} />;
   } else if (phone) you = [y.episodes ? `${y.episodes} ep${y.episodes === 1 ? '' : 's'}` : null, y.first ? `started ${when(y.first)}` : null, y.last ? `last ${ago(y.last)} ago` : null];
-  else cells.push(cell('Watched', y.episodes ? `${y.episodes} ep${y.episodes === 1 ? '' : 's'}` : null, y.plays ? `${y.plays} plays` : null, 'txt'),
-    cell('Started', when(y.first), null, 'txt'), cell('Last watched', y.last ? `${when(y.last)} · ${ago(y.last)} ago` : null, null, 'txt'));
+  else if (y.episodes) {
+    const total = (f.episodes as number | null) || d.episodes || 0;
+    youCard = <YouCard big={String(y.episodes)} total={total || null} of="episodes watched" rows={[['Started', when(y.first)], ['Last watched', y.last ? `${when(y.last)} · ${ago(y.last)} ago` : null]]} />;
+  }
   if (phone) {
     const yl = you.filter(Boolean);
     return (
@@ -559,5 +609,19 @@ function Details({ d, cls }: { d: Title; cls: string }) {
       </div>
     );
   }
-  return <div className={`glass dpanel dcells tc-details ${cls}`}>{cells}</div>;
+  return <><div className={`tc-details ${cls}`}>{cells}</div>{youCard}</>;
+}
+// your history of a title: a count (with its ring when there's a total), then dates
+function YouCard({ big, total = null, of, rows }: { big: string; total?: number | null; of: string; rows: [string, ReactNode][] }) {
+  const pct = total ? Math.min(1, Number(big) / total) : 0;
+  return (
+    <section className="tf-youc" aria-label="You">
+      <span className="hn-k">You</span>
+      <div className="tf-youc-n">
+        {total && <svg viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="36" /><circle cx="42" cy="42" r="36" className="on" strokeDasharray={`${pct * 226.2} 226.2`} /></svg>}
+        <span><b>{big}{total && <i>{` / ${total}`}</i>}</b><span>{of}</span></span>
+      </div>
+      <dl>{rows.filter(([, v]) => v).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+    </section>
+  );
 }

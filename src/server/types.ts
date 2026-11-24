@@ -40,7 +40,8 @@ export interface Omdb {
   pages?: { rt: string | null; mc: string | null };
 }
 export interface Season { n: number; name: string; episodes: number | null; year: number | null }
-export interface Provider { name: string; logo: string | null }
+// where to watch in one country: TMDB provider ids by way (f subscription, x free or with ads, r rent, b buy) and JustWatch's page
+export interface Ways { link?: string; f: number[]; x: number[]; r: number[]; b: number[] }
 // a title's card (the panel) as kept in detail_cache: TMDB's or Kitsu's details
 export interface Detail {
   key: string; type: TitleType; title: string; label: string | null; year: number | null; poster: string | null; backdrop: string | null;
@@ -49,7 +50,7 @@ export interface Detail {
   seasons: Season[] | null; next: { season?: number; ep?: number; date: string | null } | null;
   people: { label: string; names: string[] } | null;
   cast: { name: string | undefined; role: string | null; photo: string | null; id?: number | null }[];
-  providers: { stream: Provider[]; free: Provider[]; rent: Provider[]; buy: Provider[] } | null;
+  watch?: Record<string, Ways> | null;
   imdb: string | null; tvdb?: number | null; scores?: Omdb | null; collection?: { id: number; name: string } | null;
   certification: string | null; trailer: string | null; writers?: string[]; money?: { budget: number | null; revenue: number | null };
   collectionKeys?: string[]; similarKeys: string[]; anime?: boolean;
@@ -94,7 +95,7 @@ export interface TmdbItem {
 export interface TmdbSeason { season_number: number; episode_count: number; name?: string; air_date?: string | null }
 export interface TmdbEpisodeRef { season_number: number; episode_number: number; air_date?: string | null; runtime?: number | null }
 interface TmdbProvider { provider_id: number; provider_name: string; logo_path?: string | null }
-export interface TmdbProviders { flatrate?: TmdbProvider[]; free?: TmdbProvider[]; ads?: TmdbProvider[]; rent?: TmdbProvider[]; buy?: TmdbProvider[] }
+export interface TmdbProviders { link?: string; flatrate?: TmdbProvider[]; free?: TmdbProvider[]; ads?: TmdbProvider[]; rent?: TmdbProvider[]; buy?: TmdbProvider[] }
 export interface TmdbVideo { site: string; type: string; key: string; official: boolean; iso_639_1?: string }
 export interface TmdbDetails extends TmdbItem {
   'watch/providers'?: { results?: Record<string, TmdbProviders> };

@@ -32,7 +32,10 @@ export type Play = { at: number; approx?: number | null; source?: string; plays?
 export type Episode = { ep: number; name: string | null; air: string | null; runtime: number | null; still: string | null; overview: string | null; tvdb?: boolean; se?: number; tep?: number;
   score?: number | null; votes?: number; directors?: string[]; writers?: string[]; guests?: { id: number; name: string; role: string | null; photo: string | null }[];
   watched?: Play | null; mine?: number | null };
+// where to watch in your country: each service once, at its best way, yours marked; link: JustWatch's page for the title
+export type Way = { id: number; name: string; logo: string | null; kind: 'stream' | 'free' | 'rent'; mine: boolean };
 export type Title = {
+  ways?: { link: string | null; list: Way[] } | null;
   key: string; type: TitleType; title: string; label: string | null; year: number | null; poster: string | null; backdrop: string | null; backdrops?: string[];
   rating: number | null; ratingSrc: string | null; overview: string | null; url: string | null; genres: string[]; runtime: number | null;
   released: string | null; status: string | null; tagline: string | null; seasons: Season[] | null; seasonsTvdb?: Season[] | null; nextTvdb?: { season: number; ep: number } | null;

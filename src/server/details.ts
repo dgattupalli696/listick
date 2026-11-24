@@ -4,14 +4,14 @@ import { q } from './db';
 import { fribb, fromMal, loadFribb } from './mapping';
 import { langOf, namesOf, posterAt } from './names';
 import { TMDB_IMG, getJSON, kitsu, mal, tmdb } from './sources';
+import { serviceName } from '@/lib/services';
+import { prefsOf, regionOf } from './region';
 import { watchKeys } from './store';
 import { cleanSynopsis, fillFromTmdb, fromKitsu, fromTmdb, getTitle, kitsuImg, saveTitles } from './titles';
 import { cjk, fillFromTvdb, tvdbSplit, tvdbSplitKnown } from './tvdb';
 import { watchingOf } from './watching';
-import type { Detail, Episode, KitsuList, KitsuOne, MalAnime, Omdb, Title, TmdbCollection, TmdbDetails, TmdbItem, TmdbSeasonDetails, Uid } from './types';
+import type { Detail, Episode, Ways, KitsuList, KitsuOne, MalAnime, Omdb, Title, TmdbCollection, TmdbDetails, TmdbItem, TmdbSeasonDetails, Uid } from './types';
 import { HOUR, env } from './util';
-
-const REGION = 'FI';
 
 // ---------- title details (the panel), kept 6 h in detail_cache (shared with the worker, which warms them) ----------
 type Play = { season: number; episode: number; watched_at: number; approx: number; source: string };
@@ -39,7 +39,8 @@ const ANIME_V = 5;
 const isAnime = (v: Detail) => v.anime || v.type === 'anime';
 async function cachedDetail(key: string) {
   const c = await q.one<{ at: number; value: Detail }>('select at, value from detail_cache where key = ?', key);
-  return c && Date.now() - c.at < 6 * HOUR && (!isAnime(c.value) || c.value.v === ANIME_V) ? c.value : null;
+  // kept before titles carried where to watch: asked again
+  return c && Date.now() - c.at < 6 * HOUR && (!isAnime(c.value) || c.value.v === ANIME_V) && 'watch' in c.value ? c.value : null;
 }
 // uid: whose plays, ratings and Plan to watch the card carries (none: a title looked up for no one)
 export async function details(key: string, uid: Uid = null) {
@@ -71,11 +72,36 @@ export async function details(key: string, uid: Uid = null) {
     Object.assign(you, { bySeasonTvdb: Object.fromEntries(split.map((s) => [s.n, s.eps.filter((e) => seen.has(`${e.se}:${e.tep}`)).length])) });
   }
   const nx = value.next, at = split && nx?.season != null ? split.map((t) => ({ n: t.n, e: t.eps.find((x) => x.se === nx.season && x.tep === nx.ep) })).find((t) => t.e) : null;
-  return { ...value, genres: ag?.length ? ag : value.genres, nextTvdb: at ? { season: at.n, ep: at.e!.ep } : null, seasonsTvdb: split ? split.map((s) => ({ n: s.n, name: `Season ${s.n}`, episodes: s.eps.length, year: s.year })) : null,
+  return { ...value, watch: undefined, ways: await waysFor(value.watch, uid), genres: ag?.length ? ag : value.genres, nextTvdb: at ? { season: at.n, ep: at.e!.ep } : null, seasonsTvdb: split ? split.map((s) => ({ n: s.n, name: `Season ${s.n}`, episodes: s.eps.length, year: s.year })) : null,
     watchlist: wl.has(key), you, upNext: await nextUp({ key, type: value.type, anime: value.anime }, uid),
     watching: uid ? (await watchingOf(uid)).find((w) => w.key === key) ?? null : null,
     collectionItems: await cardsOf(uid, value.collectionKeys || [], wl), similar: await cardsOf(uid, similarKeys, wl) };
 }
+// the cast shown: the top-billed with a photo (of the first 15), else the top 10
+function castOf<T extends { profile_path?: string | null }>(all: T[]) {
+  const shot = all.slice(0, 15).filter((c) => c.profile_path);
+  return shot.length >= 3 ? shot.slice(0, 10) : all.slice(0, 10);
+}
+// where to watch in the user's country (US for no one), each service once by its own name (its best way: subscription, free,
+// then rent or buy), with whether it's one of theirs
+const WAYS = [['f', 'stream'], ['x', 'free'], ['r', 'rent'], ['b', 'rent']] as const;
+async function waysFor(all: Detail['watch'], uid: Uid) {
+  const p = uid ? await prefsOf(uid) : null, cc = p?.country || 'US', w = all?.[cc];
+  if (!w) return null;
+  const list = waysOf(w, (await regionOf(cc)).services, p?.services || []);
+  return list.length ? { link: w.link || null, list } : null;
+}
+export function waysOf(w: Ways, services: { id: number; name: string; logo: string | null }[], yours: number[]) {
+  const svc = new Map(services.map((s) => [s.id, s])), mine = new Set(yours);
+  const by = new Map<string, { id: number; name: string; logo: string | null; kind: 'stream' | 'free' | 'rent'; mine: boolean }>();
+  for (const [k, kind] of WAYS) for (const id of w[k] || []) {
+    const s = svc.get(id), name = s && serviceName(s.name), had = name && by.get(name.toLowerCase());
+    if (!name) continue;
+    if (had) had.mine ||= mine.has(id); else by.set(name.toLowerCase(), { id, name, logo: s.logo, kind, mine: mine.has(id) });
+  }
+  return [...by.values()];
+}
+
 // one season's episodes (TMDB for shows; Kitsu's list for anime) with your plays of each
 const seasonCache = new Map<string, { at: number; value: Episode[] }>();
 // a season as TheTVDB numbers it: each episode TMDB's, at its TMDB place (se, tep), with your plays and rating there
@@ -135,8 +161,7 @@ async function tmdbDetails(type: 'movie' | 'tv', id: string): Promise<Detail> {
   const extra = type === 'movie' ? ',release_dates,videos,recommendations' : ',content_ratings,videos,recommendations';
   const d = await tmdb<TmdbDetails>(`/${type}/${id}?append_to_response=credits,watch/providers,external_ids${extra}${type === 'tv' ? ',images&include_image_language=null' : ''}`);
   const [t] = await saveTitles([fromTmdb(type)(d)]);
-  const fi = d['watch/providers']?.results?.[REGION] || {};
-  const prov = (list: { provider_name: string; logo_path?: string | null }[] | undefined) => (list || []).map((p) => ({ name: p.provider_name, logo: p.logo_path ? `${TMDB_IMG}w92${p.logo_path}` : null }));
+  const ids = (l: { provider_id: number }[] | undefined) => (l || []).map((p) => p.provider_id);
   const crew = (job: string) => (d.credits?.crew || []).filter((c) => c.job === job).map((c) => c.name);
   return {
     ...pick(t), poster: d.poster_path ? `${TMDB_IMG}w780${d.poster_path}` : t.poster, backdrop: d.backdrop_path ? `${TMDB_IMG}w1280${d.backdrop_path}` : t.backdrop,
@@ -148,8 +173,10 @@ async function tmdbDetails(type: 'movie' | 'tv', id: string): Promise<Detail> {
       .map((s) => ({ n: s.season_number, name: s.season_number ? s.name || '' : 'Specials', episodes: s.episode_count, year: Number((s.air_date || '').slice(0, 4)) || null })) : null,
     next: d.next_episode_to_air ? { season: d.next_episode_to_air.season_number, ep: d.next_episode_to_air.episode_number, date: d.next_episode_to_air.air_date ?? null } : null,
     people: type === 'movie' ? { label: 'Director', names: crew('Director') } : { label: 'Created by', names: (d.created_by || []).map((c) => c.name) },
-    cast: (d.credits?.cast || []).slice(0, 10).map((c) => ({ name: c.name, role: c.character || null, photo: c.profile_path ? `${TMDB_IMG}w185${c.profile_path}` : null, id: c.id || null })),
-    providers: { stream: prov(fi.flatrate), free: prov([...(fi.free || []), ...(fi.ads || [])]), rent: prov(fi.rent), buy: prov(fi.buy) },
+    cast: castOf(d.credits?.cast || []).map((c) => ({ name: c.name, role: c.character || null, photo: c.profile_path ? `${TMDB_IMG}w185${c.profile_path}` : null, id: c.id || null })),
+    // every country's (one is picked per user when the card is asked for)
+    watch: Object.fromEntries(Object.entries(d['watch/providers']?.results || {}).map(([cc, w]) => [cc,
+      { link: w.link, f: ids(w.flatrate), x: ids([...w.free || [], ...w.ads || []]), r: ids(w.rent), b: ids(w.buy) }])),
     imdb: d.external_ids?.imdb_id || d.imdb_id || null, tvdb: d.external_ids?.tvdb_id || null,
     scores: await omdbFor(d.external_ids?.imdb_id || d.imdb_id),
     collection: d.belongs_to_collection ? { id: d.belongs_to_collection.id, name: d.belongs_to_collection.name } : null,
@@ -287,7 +314,7 @@ async function kitsuDetails(id: string): Promise<Detail> {
       source: m?.source ? m.source.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : null, rank: m?.rank || null },
     next: a.nextRelease ? { date: a.nextRelease.slice(0, 10) } : null,
     certification: (m?.rating && MAL_RATING[m.rating]) || null, trailer: a.youtubeVideoId ? `https://www.youtube.com/watch?v=${a.youtubeVideoId}` : null,
-    people: null, cast, providers: null, imdb: null, malUrl: malId ? `https://myanimelist.net/anime/${malId}` : null, similarKeys, kitsu: kitsuScore(a) || undefined,
+    people: null, cast, watch: null, imdb: null, malUrl: malId ? `https://myanimelist.net/anime/${malId}` : null, similarKeys, kitsu: kitsuScore(a) || undefined,
   };
 }
 const pick = (t: Title) => ({ key: t.key, type: t.type, title: t.title, label: t.label, year: t.year, poster: t.poster, backdrop: t.backdrop,

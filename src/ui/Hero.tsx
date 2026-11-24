@@ -12,7 +12,7 @@ import { cards, type Tile, type TilePatch, type TitleType } from './lib/media';
 import { titleUrl, type Title } from './lib/title';
 import { PosterArt, useOpens } from './Cards';
 import { usePhone } from './lib/home';
-import { Cert, Scores, StatusDial, YtLogo, genresOf, metaOf } from './Title';
+import { Cert, Scores, StatusDial, Trailer, YtLogo, genresOf, metaOf } from './Title';
 
 type Item = Tile & { backdrop: string | null; overview: string | null; genres: string[]; rating: number | null };
 const NAME: Record<TitleType, string> = { movie: 'Movies', tv: 'Shows', anime: 'Anime' };
@@ -31,6 +31,12 @@ export function Hero({ kind }: { kind: TitleType }) {
   const [full, setFull] = useState<Record<string, Title>>({});
   // a swipe across the carousel (a phone): where it started, to tell left from right, and from scrolling the page
   const swipe = useRef<{ x: number; y: number } | null>(null);
+  // the floating trailer: Esc closes it
+  useEffect(() => {
+    if (!trailer) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setTrailer(null); };
+    document.addEventListener('keydown', esc); return () => document.removeEventListener('keydown', esc);
+  }, [trailer]);
   useEffect(() => {
     let live = true;
     cardsGot.clear();
@@ -109,14 +115,7 @@ export function Hero({ kind }: { kind: TitleType }) {
           </button>
         ))}
       </div>
-      {/* the trailer over the picture (youtube-nocookie, the origin as Referer: see the title card's player) */}
-      {trailer && (
-        <div className="hero-player">
-          <iframe src={`https://www.youtube-nocookie.com/embed/${trailer}?autoplay=1&rel=0&modestbranding=1`} allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-            allowFullScreen title="Trailer" referrerPolicy="strict-origin-when-cross-origin" />
-          <button type="button" className="hero-x" aria-label="Close the trailer" onClick={() => setTrailer(null)}>×</button>
-        </div>
-      )}
+      {trailer && <Trailer id={trailer} close={() => setTrailer(null)} inline="hero-player" />}
     </section>
   );
 }
