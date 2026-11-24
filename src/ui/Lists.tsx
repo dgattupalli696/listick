@@ -11,7 +11,7 @@ import { getJ, postJ } from './lib/api';
 import { say, titles } from './lib/format';
 import { Icon, PATHS } from './lib/icons';
 import { listsBus, listsChanged } from './lib/lists';
-import { Builder, Chips, ICON, KIND, label, Sw, TVDB_CATS, type Draft, type Filters, type Media } from './ListBuilder';
+import { Builder, Chips, DIGITAL, ICON, KIND, label, Sw, TVDB_CATS, type Draft, type Filters, type Media } from './ListBuilder';
 import { ShelfGrid, ShelfWrap, type Item } from './Shelf';
 import { Group } from './Rail';
 import { Sheet } from './Sheet';
@@ -29,6 +29,7 @@ const TINT: Record<Media, string> = { movie: 'movie', tv: 'tv', anime: 'anime', 
 const ago = (t: number | null) => { if (!t) return 'not fetched yet'; const m = Math.round((Date.now() - t) / 60000);
   return m < 60 ? `refreshed ${Math.max(1, m)} min ago` : m < 48 * 60 ? `refreshed ${Math.round(m / 60)} h ago` : `refreshed ${Math.round(m / 1440)} days ago`; };
 const year = new Date().getFullYear();
+const SHIELD = 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z';
 // the presets: a smart list's first settings
 const PRESETS: [string, string, Partial<Draft> & { media: Media; filters: Filters }][] = [
   // all time's best: by score, with votes enough that a few 10s can't top it (fewer people rate shows and anime on TMDB)
@@ -47,6 +48,29 @@ const PRESETS: [string, string, Partial<Draft> & { media: Media; filters: Filter
   ['Travel shows', 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18', { name: 'Travel shows', media: 'tv', filters: { tvdbGenre: 25 } }],
   ['Game shows', 'M8 4h8v5a4 4 0 0 1-8 0zM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M9 21h6M10 17h4', { name: 'Game shows', media: 'tv', filters: { tvdbGenre: 8 } }],
   ['Home makeover', 'M4 11l8-7 8 7M6 10v10h12V10M10 20v-5h4v5', { name: 'Home makeover', media: 'tv', filters: { tvdbGenre: 7 } }],
+  // film industries
+  ['Bollywood', PATHS.globe, { name: 'Bollywood', media: 'movie', filters: { languages: ['hi'], countries: ['IN'], votes: 20, reach: 'streaming', watch: DIGITAL } }],
+  ['South Indian', PATHS.globe, { name: 'South Indian', media: 'movie', filters: { languages: ['te', 'ta', 'ml', 'kn'], countries: ['IN'], votes: 20, reach: 'streaming', watch: DIGITAL } }],
+  ['Indian shows', PATHS.globe, { name: 'Indian shows', media: 'tv', filters: { languages: ['hi'], countries: ['IN'], votes: 20, reach: 'streaming', watch: DIGITAL } }],
+  ['Hollywood', PATHS.globe, { name: 'Hollywood', media: 'movie', filters: { languages: ['en'], countries: ['US'], votes: 500, reach: 'streaming', watch: DIGITAL } }],
+  ['British', PATHS.globe, { name: 'British', media: 'both', filters: { languages: ['en'], countries: ['GB'], votes: 200, reach: 'streaming', watch: DIGITAL } }],
+  ['Korean movies', PATHS.globe, { name: 'Korean movies', media: 'movie', filters: { languages: ['ko'], votes: 50, reach: 'streaming', watch: DIGITAL } }],
+  ['Japanese movies', PATHS.globe, { name: 'Japanese movies', media: 'movie', filters: { languages: ['ja'], votes: 50, reach: 'streaming', watch: DIGITAL } }],
+  ['Chinese cinema', PATHS.globe, { name: 'Chinese cinema', media: 'movie', filters: { languages: ['zh', 'cn'], countries: ['CN', 'HK', 'TW'], votes: 50, reach: 'streaming', watch: DIGITAL } }],
+  ['French cinema', PATHS.globe, { name: 'French cinema', media: 'movie', filters: { languages: ['fr'], votes: 100, reach: 'streaming', watch: DIGITAL } }],
+  ['Spanish-language', PATHS.globe, { name: 'Spanish-language', media: 'both', filters: { languages: ['es'], votes: 100, reach: 'streaming', watch: DIGITAL } }],
+  ['Turkish dramas', PATHS.globe, { name: 'Turkish dramas', media: 'tv', filters: { languages: ['tr'], countries: ['TR'], votes: 20, reach: 'streaming', watch: DIGITAL } }],
+  ['Pakistani dramas', PATHS.globe, { name: 'Pakistani dramas', media: 'tv', filters: { languages: ['ur'], countries: ['PK'], votes: 5 } }],
+  // studios (TMDB company ids)
+  ['Marvel', SHIELD, { name: 'Marvel', media: 'both', filters: { companies: [{ id: 420, name: 'Marvel Studios' }] } }],
+  ['DC', SHIELD, { name: 'DC', media: 'both', filters: { companies: [{ id: 184898, name: 'DC Studios' }, { id: 128064, name: 'DC Films' }, { id: 9993, name: 'DC Entertainment' }, { id: 429, name: 'DC' }] } }],
+  ['Star Wars', SHIELD, { name: 'Star Wars', media: 'both', filters: { companies: [{ id: 1, name: 'Lucasfilm Ltd.' }] } }],
+  ['Pixar', PATHS.movie, { name: 'Pixar', media: 'movie', filters: { companies: [{ id: 3, name: 'Pixar' }] } }],
+  ['Disney', PATHS.movie, { name: 'Disney', media: 'movie', filters: { companies: [{ id: 2, name: 'Walt Disney Pictures' }], votes: 100 } }],
+  ['DreamWorks', PATHS.movie, { name: 'DreamWorks', media: 'movie', filters: { companies: [{ id: 521, name: 'DreamWorks Animation' }] } }],
+  ['Studio Ghibli', PATHS.anime, { name: 'Studio Ghibli', media: 'animefilm', filters: { companies: [{ id: 10342, name: 'Studio Ghibli' }] } }],
+  ['A24', PATHS.movie, { name: 'A24', media: 'movie', filters: { companies: [{ id: 41077, name: 'A24' }], votes: 50 } }],
+  ['Blumhouse', PATHS.movie, { name: 'Blumhouse', media: 'movie', filters: { companies: [{ id: 3172, name: 'Blumhouse Productions' }], votes: 50 } }],
 ];
 
 export function Lists() {
