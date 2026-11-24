@@ -2,7 +2,7 @@
 // Title panel: small view and full page
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref as RRef } from 'react';
 import { createPortal } from 'react-dom';
-import { TrendCard, usePosterDial } from './Cards';
+import { PIcon, TrendCard, usePosterDial } from './Cards';
 import { EpisodesPane, PickDay, airAt, fmtDay, swipeDown, timed } from './Episodes';
 import { getJ, postJ } from './lib/api';
 import { DASH, ago, srcs } from './lib/format';
@@ -384,13 +384,11 @@ function TitleFull({ d, close, leave, scroller, player }: { d: Title; close: () 
         {/* poster (wider screens) */}
         {d.poster && !phone && <img className="tf-poster" src={big(d.poster)} srcSet={srcs(d.poster, 'poster')} sizes="260px" alt="" />}
         <div className="hero-body"><Head d={d} h="h2" />{d.overview && <HeroStory key={d.key} text={d.overview} />}</div>
-        {/* the corner: a show's Next up, then where to watch (a movie's alone) */}
-        {!phone && <div className="tf-corner">{d.type !== 'movie' && <div className="tf-next" ref={setNextSlot} />}<WatchCard d={d} /></div>}
+        {d.type !== 'movie' && !phone && <div className="tf-next" ref={setNextSlot} />}
         {player}
       </section>
       <div className="tf-body">
         {d.type !== 'movie' && phone && <div className="tf-next" ref={setNextSlot} />}
-        {phone && <WatchCard d={d} />}
         <section className="tf-sec tf-ov">
           {d.overview && <Story key={d.key} d={d} />}
           <Details d={d} cls="tf-details" />
@@ -411,7 +409,7 @@ function TitleFull({ d, close, leave, scroller, player }: { d: Title; close: () 
   );
 }
 
-// where to watch: rows of five services, yours first (ringed), each with its way under it; more than five: four and "+N",
+// where to watch: rows of five services, yours first (ringed), name and way on hover; more than five: four and "+N",
 // the rest on hover; each opens JustWatch's page for the title
 const WAY_NAME: Record<Way['kind'], string> = { stream: 'Subscription', free: 'Free', rent: 'Rent/buy' };
 function WatchCard({ d }: { d: Title }) {
@@ -424,7 +422,7 @@ function WatchCard({ d }: { d: Title }) {
       <div className="wt-row">
         {list.map((x, i) => (
           <a key={x.id} className={`wt-i${i >= fit ? ' wt-x' : ''}`} href={href} target="_blank" rel="noopener" aria-label={`${x.name} · ${WAY_NAME[x.kind]}${x.mine ? ' · yours' : ''}`}>
-            <span className={`wt-logo${x.mine ? ' mine' : ''}`}>{x.logo ? <img src={x.logo} alt="" loading="lazy" /> : x.name[0]}</span><span>{WAY_NAME[x.kind]}</span>
+            <span className={`wt-logo${x.mine ? ' mine' : ''}`}>{x.logo ? <img src={x.logo} alt="" loading="lazy" /> : x.name[0]}</span><span className="wt-tag"><b>{x.name}</b><span>{WAY_NAME[x.kind]}</span></span>
           </a>))}
         {list.length > fit && <span className="wt-more">{`+${list.length - fit}`}</span>}
       </div>
@@ -577,7 +575,7 @@ function Details({ d, cls }: { d: Title; cls: string }) {
   if (d.type !== 'anime') cells.push(cell('From', [name('region', str('country')), name('language', str('language'))].filter(Boolean).join(' · '), null, 'txt'),
     ...(phone ? [] : [cell('Awards', award, aw, 'txt')]));
   // phone: your history line; wider: the You card beside the facts
-  let you: ReactNode[] = [], youCard: ReactNode = null;
+  let youCard: ReactNode = null;
   if (d.type === 'movie') {
     // the latest watch's date can be changed here (a date-unknown one, from marking or rating it, too)
     const last = y.moviePlays?.[0];
@@ -592,36 +590,33 @@ function Details({ d, cls }: { d: Title; cls: string }) {
         onClick={() => pickDay({ anchor: editRef.current!, air: last.approx === 1 ? null : last.at, save: (t) => retime(t as number), keepTime: timed(last),
           airDay: airAt({ air: d.released }), airLabel: 'Release date' })}>{last.approx === 1 ? 'Add date' : when(last.at)}</button>
     ) : null;
-    if (phone) you = [y.plays ? `${y.plays}× watched` : null, y.first ? `first ${when(y.first)}` : null, lw && <span key="l">{last!.approx === 1 ? '' : 'last '}{lw}</span>];
-    else if (y.plays) youCard = <YouCard big={`${y.plays}×`} of="watched" rows={[['First watched', when(y.first)], ['Last watched', lw]]} />;
-  } else if (phone) you = [y.episodes ? `${y.episodes} ep${y.episodes === 1 ? '' : 's'}` : null, y.first ? `started ${when(y.first)}` : null, y.last ? `last ${ago(y.last)} ago` : null];
-  else if (y.episodes) {
+    if (y.plays) youCard = <YouCard big={`${y.plays}×`} of="watched" rows={[['First watched', when(y.first)], ['Last watched', lw]]} />;
+  } else if (y.episodes) {
     const total = (f.episodes as number | null) || d.episodes || 0;
-    youCard = <YouCard big={String(y.episodes)} total={total || null} of="episodes watched" rows={[['Started', when(y.first)], ['Last watched', y.last ? `${when(y.last)} · ${ago(y.last)} ago` : null]]} />;
+    youCard = <YouCard big={String(y.episodes)} total={total || null} of="episodes" rows={[['Started', when(y.first)], ['Last watched', y.last ? <Tight text={`${ago(y.last)} ago`} /> : null]]} />;
   }
-  if (phone) {
-    const yl = you.filter(Boolean);
-    return (
-      <div className="tf-facts">
-        {cells.some(Boolean) && <div className="tf-flist">{cells}</div>}
-        {award && <p className="tf-award" title={aw!}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></svg>{award}</p>}
-        {!!yl.length && <p className="tf-you"><b>You</b><span>{yl.flatMap((x, i) => (i ? [' · ', x] : [x]))}</span></p>}
-      </div>
-    );
-  }
-  return <><div className={`tc-details ${cls}`}>{cells}</div>{youCard}</>;
+  const side = (d.ways || youCard) && <div className="tf-side"><WatchCard d={d} />{youCard}</div>;
+  if (phone) return (
+    <div className="tf-facts">
+      {side}
+      {cells.some(Boolean) && <div className="tf-flist">{cells}</div>}
+      {award && <p className="tf-award" title={aw!}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></svg>{award}</p>}
+    </div>
+  );
+  return <><div className={`tc-details ${cls}`}>{cells}</div>{side}</>;
 }
-// your history of a title: a count (with its ring when there's a total), then dates
+// your history of a title: the watched tick in a ring (how much of it, or full), the count, then each date on its line
 function YouCard({ big, total = null, of, rows }: { big: string; total?: number | null; of: string; rows: [string, ReactNode][] }) {
-  const pct = total ? Math.min(1, Number(big) / total) : 0;
+  const pct = total ? Math.min(1, Number(big) / total) : 1;
   return (
     <section className="tf-youc" aria-label="You">
       <span className="hn-k">You</span>
       <div className="tf-youc-n">
-        {total && <svg viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="36" /><circle cx="42" cy="42" r="36" className="on" strokeDasharray={`${pct * 226.2} 226.2`} /></svg>}
-        <span><b>{big}{total && <i>{` / ${total}`}</i>}</b><span>{of}</span></span>
+        <span className="tf-youc-r"><svg className="ring" viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="36" /><circle cx="42" cy="42" r="36" className="on" strokeDasharray={`${pct * 226.2} 226.2`} /></svg>
+          <PIcon name="watched" /></span>
+        <span className="tf-youc-t"><b>{big}{total && <i>{` / ${total}`}</i>}<span>{` ${of}`}</span></b>
+          {rows.filter(([, v]) => v).map(([k, v]) => <span key={k} className="tf-youc-d">{k} <em>{v}</em></span>)}</span>
       </div>
-      <dl>{rows.filter(([, v]) => v).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
     </section>
   );
 }
