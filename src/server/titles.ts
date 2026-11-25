@@ -11,7 +11,7 @@ export async function saveTitles<T extends Title>(list: T[]): Promise<T[]> {
   const last = new Map<string, Title>();
   // genres go in as JSON text: from a source as genreJson made it, from a stored row (asTmdb hands those back) as an array
   for (const t of list) last.set(t.key, { ...t, anime: t.anime ?? null, episodes: t.episodes ?? null, genres: Array.isArray(t.genres) ? JSON.stringify(t.genres) : t.genres ?? null });
-  const rows = [...last.values()];
+  const rows = [...last.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   for (let i = 0; i < rows.length; i += 2000) {
     const part = rows.slice(i, i + 2000), params: unknown[] = [];
     const values = part.map((t) => `(${TITLE_COLS.map((c) => { params.push(t[c] ?? null); return c === 'genres' ? '?::jsonb' : '?'; }).join(', ')})`).join(', ');
